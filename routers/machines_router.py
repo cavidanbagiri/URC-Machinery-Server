@@ -468,39 +468,36 @@ async def create_machine(
         raise HTTPException(status_code=500, detail=f"Machine yaradıla bilmədi: {e}")
 
 
-@router.get(
-    "/fetch_machines",
-    response_model=PaginatedAllMachineSchema,
-)
-async def fetch_machines(
-    db: Annotated[AsyncSession, Depends(get_db)],
-    page: int = 1,
-    page_size: int = 20,
-    territory_id: Optional[int] = None,
-    type_id: Optional[int] = None,
-    company_id: Optional[int] = None,
-):
-    try:
-        repo = AllMachineRepository(db)
-        return await repo.fetch_paginated(
-            page=page,
-            page_size=page_size,
-            territory_id=territory_id,
-            type_id=type_id,
-            company_id=company_id,
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Machine-lar gətirilə bilmədi: {e}")
-
-
-# routers/machines_router.py (dəyişdir)
-from datetime import datetime
+# @router.get(
+#     "/fetch_machines",
+#     response_model=PaginatedAllMachineSchema,
+# )
+# async def fetch_machines(
+#     db: Annotated[AsyncSession, Depends(get_db)],
+#     page: int = 1,
+#     page_size: int = 20,
+#     territory_id: Optional[int] = None,
+#     type_id: Optional[int] = None,
+#     company_id: Optional[int] = None,
+# ):
+#     try:
+#         repo = AllMachineRepository(db)
+#         return await repo.fetch_paginated(
+#             page=page,
+#             page_size=page_size,
+#             territory_id=territory_id,
+#             type_id=type_id,
+#             company_id=company_id,
+#         )
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Machine-lar gətirilə bilmədi: {e}")
 
 
 
-# routers/machines_router.py (dəyişdir)
+
+
 
 @router.get(
     "/fetch_machines",
@@ -521,6 +518,8 @@ async def fetch_machines(
     created_by_id: Optional[int] = None,
     production_year: Optional[int] = None,
 ):
+    print("DEBUG — fetch_machines çağırıldı")
+    print(f"DEBUG — limit={limit}, offset={offset}")
     try:
         repo = AllMachineRepository(db)
         return await repo.fetch_paginated(
@@ -541,6 +540,9 @@ async def fetch_machines(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Machine-lar gətirilə bilmədi: {e}")
+
+
+
 
 
 @router.put(

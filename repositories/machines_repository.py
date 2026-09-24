@@ -327,6 +327,88 @@ class AllMachineRepository:
                 "items": items,
             }
 
+    async def fetch_paginated(
+            self,
+            limit: int = 20,
+            offset: int = 0,
+            identification_no: str | None = None,
+            vin_no: str | None = None,
+            territory_id: int | None = None,
+            type_id: int | None = None,
+            subtype_id: int | None = None,
+            car_mark_id: int | None = None,
+            car_model_id: int | None = None,
+            company_id: int | None = None,
+            created_by_id: int | None = None,
+            production_year: int | None = None,
+    ) -> dict:
+        # Limit / offset yoxlama
+        if limit < 1:
+            limit = 20
+        if limit > 100:
+            limit = 100
+        if offset < 0:
+            offset = 0
+
+        # Base queries
+        query = select(AllMachineModel)
+        count_query = select(func.count(AllMachineModel.id))  # ← BURADA
+
+        # Filtrlər
+        filters = []
+        if identification_no:
+            filters.append(
+                AllMachineModel.identification_no.ilike(f"%{identification_no}%")
+            )
+        if vin_no:
+            filters.append(AllMachineModel.vin_no.ilike(f"%{vin_no}%"))
+        if territory_id is not None:
+            filters.append(AllMachineModel.territory_id == territory_id)
+        if type_id is not None:
+            filters.append(AllMachineModel.type_id == type_id)
+        if subtype_id is not None:
+            filters.append(AllMachineModel.subtype_id == subtype_id)
+        if car_mark_id is not None:
+            filters.append(AllMachineModel.car_mark_id == car_mark_id)
+        if car_model_id is not None:
+            filters.append(AllMachineModel.car_model_id == car_model_id)
+        if company_id is not None:
+            filters.append(AllMachineModel.company_id == company_id)
+        if created_by_id is not None:
+            filters.append(AllMachineModel.created_by_id == created_by_id)
+        if production_year is not None:
+            year_start = datetime(production_year, 1, 1, tzinfo=timezone.utc)
+            year_end = datetime(production_year, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+            filters.append(AllMachineModel.production_year >= year_start)
+            filters.append(AllMachineModel.production_year <= year_end)
+
+        if filters:
+            query = query.where(*filters)
+            count_query = count_query.where(*filters)  # ← BURADA
+
+        # Total
+        total_result = await self.db.execute(count_query)
+        total = total_result.scalar() or 0
+
+        # Items
+        query = (
+            query
+            .order_by(AllMachineModel.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        items_result = await self.db.execute(query)
+        items = list(items_result.scalars().all())
+
+        return {
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "items": items,
+        }
+
+
+
     # ---------- FETCH BY ID ----------
     async def fetch_by_id(self, machine_id: int) -> AllMachineModel:
         result = await self.db.execute(

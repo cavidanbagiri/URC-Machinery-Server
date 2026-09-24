@@ -149,11 +149,8 @@ class FetchAllMachineSchema(BaseModel):
     created_at: Optional[datetime]
 
 
-# schemas/machines_schemas.py (dəyişdir)
-# schemas/machines_schemas.py (dəyişdir)
-
 class PaginatedAllMachineSchema(BaseModel):
-    """Pagination cavabı (limit + offset)."""
+    total: int
     limit: int
     offset: int
     items: list[FetchAllMachineSchema]
