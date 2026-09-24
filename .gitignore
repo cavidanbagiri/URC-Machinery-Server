@@ -1,0 +1,99 @@
+# ==============================================================================
+# FastAPI & Project Specific
+# ==============================================================================
+# Environment variables and secrets (Your request)
+.env
+.env.*
+!.env.example
+
+# Virtual environments (Your request)
+.venv/
+venv/
+ENV/
+env/
+
+# FastAPI / Uvicorn test & log files
+*.log
+
+# ==============================================================================
+# Python Standard
+# ==============================================================================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+bin/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Inline type checker cache
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+
+# pytest & test coverage
+.pytest_cache/
+.htmlcov/
+htmlcov/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.mutmut-cache
+
+# Ruff / Linters
+.ruff_cache/
+
+# ==============================================================================
+# Editors and IDEs
+# ==============================================================================
+# VS Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# JetBrains (PyCharm)
+.idea/
+
+# Local history
+.history/
+
+# ==============================================================================
+# Operating Systems
+# ==============================================================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.lnk
