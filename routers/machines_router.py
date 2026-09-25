@@ -484,18 +484,17 @@ async def fetch_machines(
     offset: int = 0,
     identification_no: Optional[str] = None,
     vin_no: Optional[str] = None,
+    plate_no: Optional[str] = None,
     territory_id: Optional[int] = None,
     type_id: Optional[int] = None,
     subtype_id: Optional[int] = None,
     car_mark_id: Optional[int] = None,
     car_model_id: Optional[int] = None,
     company_id: Optional[int] = None,
-    status_id: Optional[int] = None,  # ← YENİ
+    status_id: Optional[int] = None,
     created_by_id: Optional[int] = None,
     production_year: Optional[int] = None,
 ):
-    print("DEBUG — fetch_machines çağırıldı")
-    print(f"DEBUG — limit={limit}, offset={offset}")
     try:
         repo = AllMachineRepository(db)
         return await repo.fetch_paginated(
@@ -503,6 +502,7 @@ async def fetch_machines(
             offset=offset,
             identification_no=identification_no,
             vin_no=vin_no,
+            plate_no=plate_no,
             territory_id=territory_id,
             type_id=type_id,
             subtype_id=subtype_id,

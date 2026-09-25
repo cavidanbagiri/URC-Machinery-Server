@@ -100,6 +100,7 @@ class AllMachineModel(Base):
     # Basic Info
     identification_no = Column(String(100), nullable=True, index=True)
     vin_no = Column(String(100), nullable=True, unique=True, index=True)
+    plate_no = Column(String(50), nullable=True, unique=True, index=True)  # ← YENİ
     technical_character = Column(String(500), nullable=True)
 
     # Production Year is mapped as DateTime per diagram, but usually Integer is better for Year.

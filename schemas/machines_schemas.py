@@ -104,6 +104,7 @@ class FetchCompanySchema(BaseModel):
 class CreateAllMachineSchema(BaseModel):
     identification_no: Optional[str] = Field(None, max_length=100)
     vin_no: Optional[str] = Field(None, max_length=100)
+    plate_no: Optional[str] = Field(None, max_length=50)  # ← YENİ
     technical_character: Optional[str] = Field(None, max_length=500)
     production_year: Optional[datetime] = None
     weight: Optional[float] = None
@@ -133,6 +134,7 @@ class FetchAllMachineSchema(BaseModel):
     id: int
     identification_no: Optional[str]
     vin_no: Optional[str]
+    plate_no: Optional[str]                                      # ← YENİ
     technical_character: Optional[str]
     production_year: Optional[datetime]
     weight: Optional[float]

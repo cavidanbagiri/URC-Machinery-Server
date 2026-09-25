@@ -335,6 +335,7 @@ class AllMachineRepository:
             offset: int = 0,
             identification_no: str | None = None,
             vin_no: str | None = None,
+            plate_no: str | None = None,                                 # ← YENİ
             territory_id: int | None = None,
             type_id: int | None = None,
             subtype_id: int | None = None,
@@ -365,6 +366,8 @@ class AllMachineRepository:
             )
         if vin_no:
             filters.append(AllMachineModel.vin_no.ilike(f"%{vin_no}%"))
+        if plate_no:  # ← YENİ
+            filters.append(AllMachineModel.plate_no.ilike(f"%{plate_no}%"))
         if territory_id is not None:
             filters.append(AllMachineModel.territory_id == territory_id)
         if type_id is not None:
