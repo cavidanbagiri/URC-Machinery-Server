@@ -12,6 +12,7 @@ from models.machines_model import (
     CarMarkModel,
     CarModelModel,
     CompanyModel,
+    CarStatusModel
 )
 from schemas.machines_schemas import (
     CreateTerritorySchema,
@@ -19,7 +20,7 @@ from schemas.machines_schemas import (
     CreateSubTypeTransportSchema,
     CreateCarMarkSchema,
     CreateCarModelSchema,
-    CreateCompanySchema,
+    CreateCompanySchema, CreateCarStatusSchema, UpdateCarStatusSchema,
 )
 
 
@@ -207,6 +208,7 @@ class AllMachineRepository:
         await self._validate_fk(CarMarkModel, data.car_mark_id, "Car Mark")
         await self._validate_fk(CarModelModel, data.car_model_id, "Car Model")
         await self._validate_fk(CompanyModel, data.company_id, "Company")
+        await self._validate_fk(CarStatusModel, data.status_id, "Status")  # ← YENİ
 
     # ---------- CREATE ----------
     async def create(
@@ -339,6 +341,7 @@ class AllMachineRepository:
             car_mark_id: int | None = None,
             car_model_id: int | None = None,
             company_id: int | None = None,
+            status_id: int | None = None,  # ← YENİ
             created_by_id: int | None = None,
             production_year: int | None = None,
     ) -> dict:
@@ -374,6 +377,8 @@ class AllMachineRepository:
             filters.append(AllMachineModel.car_model_id == car_model_id)
         if company_id is not None:
             filters.append(AllMachineModel.company_id == company_id)
+        if status_id is not None:  # ← YENİ
+            filters.append(AllMachineModel.status_id == status_id)
         if created_by_id is not None:
             filters.append(AllMachineModel.created_by_id == created_by_id)
         if production_year is not None:
@@ -410,6 +415,14 @@ class AllMachineRepository:
 
 
     # ---------- FETCH BY ID ----------
+    # async def fetch_by_id(self, machine_id: int) -> AllMachineModel:
+    #     result = await self.db.execute(
+    #         select(AllMachineModel).where(AllMachineModel.id == machine_id)
+    #     )
+    #     machine = result.scalar_one_or_none()
+    #     if machine is None:
+    #         raise HTTPException(status_code=404, detail="Machine tapılmadı")
+    #     return machine
     async def fetch_by_id(self, machine_id: int) -> AllMachineModel:
         result = await self.db.execute(
             select(AllMachineModel).where(AllMachineModel.id == machine_id)
@@ -463,6 +476,106 @@ class AllMachineRepository:
 
         try:
             await self.db.delete(machine)
+            await self.db.commit()
+        except Exception:
+            await self.db.rollback()
+            raise
+
+
+
+
+
+class CarStatusRepository:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def create(self, data: CreateCarStatusSchema) -> CarStatusModel:
+        # Eyni adlı varsa → 409
+        existing = await self.db.execute(
+            select(CarStatusModel).where(CarStatusModel.name == data.name)
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(
+                status_code=409,
+                detail="Bu adda status artıq mövcuddur",
+            )
+
+        obj = CarStatusModel(
+            name=data.name,
+            color=data.color,
+            description=data.description,
+        )
+        self.db.add(obj)
+
+        try:
+            await self.db.commit()
+            await self.db.refresh(obj)
+        except Exception:
+            await self.db.rollback()
+            raise
+
+        return obj
+
+    async def fetch_all(self) -> list[CarStatusModel]:
+        result = await self.db.execute(
+            select(CarStatusModel).order_by(CarStatusModel.id)
+        )
+        return list(result.scalars().all())
+
+    async def fetch_by_id(self, obj_id: int) -> CarStatusModel:
+        result = await self.db.execute(
+            select(CarStatusModel).where(CarStatusModel.id == obj_id)
+        )
+        obj = result.scalar_one_or_none()
+        if obj is None:
+            raise HTTPException(status_code=404, detail="Status tapılmadı")
+        return obj
+
+    async def update(self, obj_id: int, data: UpdateCarStatusSchema) -> CarStatusModel:
+        obj = await self.fetch_by_id(obj_id)
+
+        # Eyni adlı başqa varsa → 409
+        if data.name:
+            existing = await self.db.execute(
+                select(CarStatusModel).where(
+                    CarStatusModel.name == data.name,
+                    CarStatusModel.id != obj_id,
+                )
+            )
+            if existing.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=409,
+                    detail="Bu adda status artıq mövcuddur",
+                )
+
+        # Yalnız göndərilən sahələri yenilə
+        for field, value in data.model_dump(exclude_unset=True).items():
+            setattr(obj, field, value)
+
+        try:
+            await self.db.commit()
+            await self.db.refresh(obj)
+        except Exception:
+            await self.db.rollback()
+            raise
+
+        return obj
+
+    async def delete(self, obj_id: int) -> None:
+        obj = await self.fetch_by_id(obj_id)
+
+        # İstifadədə olub-olmadığını yoxla
+        in_use = await self.db.execute(
+            select(AllMachineModel).where(AllMachineModel.status_id == obj_id).limit(1)
+        )
+        if in_use.scalar_one_or_none():
+            raise HTTPException(
+                status_code=409,
+                detail="Bu status maşınlarda istifadə olunur, silinə bilməz",
+            )
+
+        try:
+            await self.db.delete(obj)
             await self.db.commit()
         except Exception:
             await self.db.rollback()

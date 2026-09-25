@@ -112,12 +112,14 @@ class CreateAllMachineSchema(BaseModel):
     engine_mark_model: Optional[str] = Field(None, max_length=255)
     engine_identity: Optional[str] = Field(None, max_length=255)
 
+
     territory_id: Optional[int] = None
     type_id: Optional[int] = None
     subtype_id: Optional[int] = None
     car_mark_id: Optional[int] = None
     car_model_id: Optional[int] = None
     company_id: Optional[int] = None
+    status_id: Optional[int] = 1        # ← BURADA OLmalıdır
 
 
 class UpdateAllMachineSchema(CreateAllMachineSchema):
@@ -147,6 +149,7 @@ class FetchAllMachineSchema(BaseModel):
     company_id: Optional[int]
     created_by_id: Optional[int]
     created_at: Optional[datetime]
+    status_id: int
 
 
 class PaginatedAllMachineSchema(BaseModel):
@@ -154,3 +157,30 @@ class PaginatedAllMachineSchema(BaseModel):
     limit: int
     offset: int
     items: list[FetchAllMachineSchema]
+
+
+# schemas/machines_schemas.py (əlavə)
+
+# =========================================================
+# CAR STATUS
+# =========================================================
+
+class CreateCarStatusSchema(BaseModel):
+    name: str = Field(..., min_length=1, max_length=50)
+    color: str = Field("gray", max_length=20)
+    description: Optional[str] = Field(None, max_length=255)
+
+
+class UpdateCarStatusSchema(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=50)
+    color: Optional[str] = Field(None, max_length=20)
+    description: Optional[str] = Field(None, max_length=255)
+
+
+class FetchCarStatusSchema(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    color: str
+    description: Optional[str]

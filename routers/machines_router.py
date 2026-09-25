@@ -13,6 +13,7 @@ from repositories.machines_repository import (
     CarMarkRepository,
     CarModelRepository,
     CompanyRepository,
+    CarStatusRepository
 )
 from schemas.machines_schemas import (
     CreateTerritorySchema, FetchTerritorySchema,
@@ -21,6 +22,9 @@ from schemas.machines_schemas import (
     CreateCarMarkSchema, FetchCarMarkSchema,
     CreateCarModelSchema, FetchCarModelSchema,
     CreateCompanySchema, FetchCompanySchema,
+    CreateCarStatusSchema,UpdateCarStatusSchema,
+    FetchCarStatusSchema,
+
 )
 
 router = APIRouter()
@@ -468,35 +472,6 @@ async def create_machine(
         raise HTTPException(status_code=500, detail=f"Machine yaradıla bilmədi: {e}")
 
 
-# @router.get(
-#     "/fetch_machines",
-#     response_model=PaginatedAllMachineSchema,
-# )
-# async def fetch_machines(
-#     db: Annotated[AsyncSession, Depends(get_db)],
-#     page: int = 1,
-#     page_size: int = 20,
-#     territory_id: Optional[int] = None,
-#     type_id: Optional[int] = None,
-#     company_id: Optional[int] = None,
-# ):
-#     try:
-#         repo = AllMachineRepository(db)
-#         return await repo.fetch_paginated(
-#             page=page,
-#             page_size=page_size,
-#             territory_id=territory_id,
-#             type_id=type_id,
-#             company_id=company_id,
-#         )
-#     except HTTPException:
-#         raise
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f"Machine-lar gətirilə bilmədi: {e}")
-
-
-
-
 
 
 @router.get(
@@ -515,6 +490,7 @@ async def fetch_machines(
     car_mark_id: Optional[int] = None,
     car_model_id: Optional[int] = None,
     company_id: Optional[int] = None,
+    status_id: Optional[int] = None,  # ← YENİ
     created_by_id: Optional[int] = None,
     production_year: Optional[int] = None,
 ):
@@ -533,6 +509,7 @@ async def fetch_machines(
             car_mark_id=car_mark_id,
             car_model_id=car_model_id,
             company_id=company_id,
+            status_id=status_id,
             created_by_id=created_by_id,
             production_year=production_year,
         )
@@ -541,6 +518,24 @@ async def fetch_machines(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Machine-lar gətirilə bilmədi: {e}")
 
+
+
+
+@router.get(
+    "/fetch_machine/{machine_id}",
+    response_model=FetchAllMachineSchema,
+)
+async def fetch_machine(
+    machine_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    try:
+        repo = AllMachineRepository(db)
+        return await repo.fetch_by_id(machine_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Machine gətirilə bilmədi: {e}")
 
 
 
@@ -580,3 +575,71 @@ async def delete_machine(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Machine silinə bilmədi: {e}")
+
+
+
+# =========================================================
+# CAR STATUS
+# =========================================================
+
+@router.post(
+    "/create_car_status",
+    status_code=201,
+    response_model=FetchCarStatusSchema,
+    dependencies=[Depends(require_write_permission)],
+)
+async def create_car_status(
+    data: CreateCarStatusSchema,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    try:
+        return await CarStatusRepository(db).create(data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Status yaradıla bilmədi: {e}")
+
+
+@router.get("/fetch_car_statuses", response_model=list[FetchCarStatusSchema])
+async def fetch_car_statuses(db: Annotated[AsyncSession, Depends(get_db)]):
+    try:
+        return await CarStatusRepository(db).fetch_all()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Statuslar gətirilə bilmədi: {e}")
+
+
+@router.put(
+    "/update_car_status/{obj_id}",
+    response_model=FetchCarStatusSchema,
+    dependencies=[Depends(require_write_permission)],
+)
+async def update_car_status(
+    obj_id: int,
+    data: UpdateCarStatusSchema,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    try:
+        return await CarStatusRepository(db).update(obj_id, data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Status yenilənə bilmədi: {e}")
+
+
+@router.delete(
+    "/delete_car_status/{obj_id}",
+    status_code=204,
+    dependencies=[Depends(require_write_permission)],
+)
+async def delete_car_status(
+    obj_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    try:
+        await CarStatusRepository(db).delete(obj_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Status silinə bilmədi: {e}")

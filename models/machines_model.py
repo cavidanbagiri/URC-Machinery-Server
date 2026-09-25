@@ -121,6 +121,16 @@ class AllMachineModel(Base):
     car_model_id = Column(Integer, ForeignKey("car_models.id"), nullable=True, index=True)
     company_id = Column(Integer, ForeignKey("companies.id"), nullable=True, index=True)
 
+    # YENİ — Status
+    status_id = Column(
+        Integer,
+        ForeignKey("car_statuses.id"),
+        nullable=False,
+        default=1,
+        server_default="1",
+        index=True,
+    )
+
     # Audit / User Link
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
 
@@ -140,8 +150,28 @@ class AllMachineModel(Base):
     car_model = relationship("CarModelModel", back_populates="machines")
     company = relationship("CompanyModel", back_populates="machines")
 
+    # YENİ — Status relationship
+    status = relationship("CarStatusModel", back_populates="machines")
+
     # Relationship to User (assuming UserModel is defined in the same file or imported)
     creator = relationship("UserModel")
 
     def __str__(self):
         return f"{self.identification_no} - {self.vin_no}"
+
+
+
+
+class CarStatusModel(Base):
+    __tablename__ = "car_statuses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(50), nullable=False, unique=True)
+    color = Column(String(20), nullable=False, default="gray")
+    description = Column(String(255), nullable=True)
+
+    # Relationship
+    machines = relationship("AllMachineModel", back_populates="status")
+
+    def __str__(self):
+        return f"{self.name}"
