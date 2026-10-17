@@ -417,15 +417,6 @@ class AllMachineRepository:
 
 
 
-    # ---------- FETCH BY ID ----------
-    # async def fetch_by_id(self, machine_id: int) -> AllMachineModel:
-    #     result = await self.db.execute(
-    #         select(AllMachineModel).where(AllMachineModel.id == machine_id)
-    #     )
-    #     machine = result.scalar_one_or_none()
-    #     if machine is None:
-    #         raise HTTPException(status_code=404, detail="Machine tapılmadı")
-    #     return machine
     async def fetch_by_id(self, machine_id: int) -> AllMachineModel:
         result = await self.db.execute(
             select(AllMachineModel).where(AllMachineModel.id == machine_id)
@@ -485,7 +476,43 @@ class AllMachineRepository:
             raise
 
 
+    async def get_status_statistics(self) -> dict:
+        """
+        Hər status üçün maşın sayını qaytarır.
+        LEFT JOIN — heç maşını olmayan status da görünür (count=0).
+        """
+        query = (
+            select(
+                CarStatusModel.id,
+                CarStatusModel.name,
+                CarStatusModel.color,
+                func.count(AllMachineModel.id).label("count"),
+            )
+            .outerjoin(AllMachineModel, AllMachineModel.status_id == CarStatusModel.id)
+            .group_by(CarStatusModel.id, CarStatusModel.name, CarStatusModel.color)
+            .order_by(CarStatusModel.id)
+        )
 
+        result = await self.db.execute(query)
+        rows = result.all()
+
+        # Total
+        total_query = select(func.count(AllMachineModel.id))
+        total_result = await self.db.execute(total_query)
+        total = total_result.scalar() or 0
+
+        return {
+            "total": total,
+            "by_status": [
+                {
+                    "id": row.id,
+                    "name": row.name,
+                    "color": row.color,
+                    "count": row.count,
+                }
+                for row in rows
+            ],
+        }
 
 
 class CarStatusRepository:

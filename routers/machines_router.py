@@ -22,8 +22,8 @@ from schemas.machines_schemas import (
     CreateCarMarkSchema, FetchCarMarkSchema,
     CreateCarModelSchema, FetchCarModelSchema,
     CreateCompanySchema, FetchCompanySchema,
-    CreateCarStatusSchema,UpdateCarStatusSchema,
-    FetchCarStatusSchema,
+    CreateCarStatusSchema, UpdateCarStatusSchema,
+    FetchCarStatusSchema, StatusStatisticsSchema,
 
 )
 
@@ -643,3 +643,24 @@ async def delete_car_status(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Status silinə bilmədi: {e}")
+
+
+
+
+@router.get(
+    "/statistics/status",
+    response_model=StatusStatisticsSchema,
+)
+async def get_status_statistics(
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    try:
+        repo = AllMachineRepository(db)
+        return await repo.get_status_statistics()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Statistika gətirilə bilmədi: {e}",
+        )

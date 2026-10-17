@@ -186,3 +186,18 @@ class FetchCarStatusSchema(BaseModel):
     name: str
     color: str
     description: Optional[str]
+
+
+
+# schemas/machines_schemas.py (əlavə)
+
+class StatusStatItemSchema(BaseModel):
+    id: int
+    name: str
+    color: str
+    count: int
+
+
+class StatusStatisticsSchema(BaseModel):
+    total: int
+    by_status: list[StatusStatItemSchema]
