@@ -514,6 +514,75 @@ class AllMachineRepository:
             ],
         }
 
+    async def get_type_territory_pivot(self) -> dict:
+        """
+        Type Transport × Territory pivot cədvəli.
+        """
+        # 1) Bütün territory-lər
+        territories_result = await self.db.execute(
+            select(TerritoryModel).order_by(TerritoryModel.id)
+        )
+        territories = list(territories_result.scalars().all())
+
+        # 2) Bütün type-lar
+        types_result = await self.db.execute(
+            select(TypeTransportModel).order_by(TypeTransportModel.id)
+        )
+        types = list(types_result.scalars().all())
+
+        # 3) Hər (type_id, territory_id) üçün say
+        count_query = (
+            select(
+                AllMachineModel.type_id,
+                AllMachineModel.territory_id,
+                func.count(AllMachineModel.id).label("count"),
+            )
+            .where(
+                AllMachineModel.type_id.isnot(None),
+                AllMachineModel.territory_id.isnot(None),
+            )
+            .group_by(AllMachineModel.type_id, AllMachineModel.territory_id)
+        )
+        count_result = await self.db.execute(count_query)
+        counts_map = {
+            (row.type_id, row.territory_id): row.count
+            for row in count_result.all()
+        }
+
+        # 4) Sətirləri hazırla
+        rows = []
+        grand_totals = {str(t.id): 0 for t in territories}
+        grand_total = 0
+
+        for t in types:
+            counts = {}
+            row_total = 0
+            for territory in territories:
+                c = counts_map.get((t.id, territory.id), 0)
+                counts[str(territory.id)] = c
+                row_total += c
+                grand_totals[str(territory.id)] += c
+            grand_total += row_total
+
+            rows.append({
+                "type_id": t.id,
+                "type_name": t.name,
+                "counts": counts,
+                "total": row_total,
+            })
+
+        # 5) Toplam üzrə azalan sırala (B variantı)
+        rows.sort(key=lambda r: r["total"], reverse=True)
+
+        return {
+            "territories": [
+                {"id": t.id, "name": t.name} for t in territories
+            ],
+            "rows": rows,
+            "grand_totals": grand_totals,
+            "grand_total": grand_total,
+        }
+
 
 class CarStatusRepository:
     def __init__(self, db: AsyncSession):

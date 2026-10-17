@@ -23,7 +23,7 @@ from schemas.machines_schemas import (
     CreateCarModelSchema, FetchCarModelSchema,
     CreateCompanySchema, FetchCompanySchema,
     CreateCarStatusSchema, UpdateCarStatusSchema,
-    FetchCarStatusSchema, StatusStatisticsSchema,
+    FetchCarStatusSchema, StatusStatisticsSchema, PivotTableSchema,
 
 )
 
@@ -663,4 +663,24 @@ async def get_status_statistics(
         raise HTTPException(
             status_code=500,
             detail=f"Statistika gətirilə bilmədi: {e}",
+        )
+
+
+
+@router.get(
+    "/statistics/pivot",
+    response_model=PivotTableSchema,
+)
+async def get_pivot_statistics(
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    try:
+        repo = AllMachineRepository(db)
+        return await repo.get_type_territory_pivot()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Pivot statistika gətirilə bilmədi: {e}",
         )

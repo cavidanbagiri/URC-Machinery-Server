@@ -201,3 +201,23 @@ class StatusStatItemSchema(BaseModel):
 class StatusStatisticsSchema(BaseModel):
     total: int
     by_status: list[StatusStatItemSchema]
+
+
+
+class PivotTerritorySchema(BaseModel):
+    id: int
+    name: str
+
+
+class PivotRowSchema(BaseModel):
+    type_id: int
+    type_name: str
+    counts: dict[str, int]        # { "1": 11, "2": 0, ... }
+    total: int
+
+
+class PivotTableSchema(BaseModel):
+    territories: list[PivotTerritorySchema]
+    rows: list[PivotRowSchema]
+    grand_totals: dict[str, int]  # { "1": 26, "2": 35, ... }
+    grand_total: int
