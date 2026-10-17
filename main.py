@@ -16,6 +16,7 @@ load_dotenv()
 
 origins = [
     "http://localhost:5173",
+    "https://urc-machinery-web.onrender.com"
 ]
 
 app.add_middleware(
