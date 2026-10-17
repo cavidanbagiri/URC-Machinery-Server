@@ -10,6 +10,9 @@ STATUS_PERMISSIONS: dict[int, int] = {
 # Yazma icazəsi olan dəyərlər (create / update / delete)
 WRITE_PERMISSION_VALUES = (1, 10, 100)
 
+# Public registration always creates read-only accounts (status id = 4).
+DEFAULT_REGISTRATION_STATUS_ID = 4
+
 
 def get_permission_value(status_id: int) -> int:
     """Status ID-yə uyğun icazə dəyərini qaytarır. Naməlum status → 0."""

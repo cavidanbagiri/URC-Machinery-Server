@@ -173,9 +173,8 @@ class CompanyRepository(_BaseLookupRepository):
 
 
 # repositories/machines_repository.py (əlavə)
-import math
-
 from sqlalchemy import select, func
+from sqlalchemy.exc import IntegrityError
 
 from models.machines_model import AllMachineModel
 from schemas.machines_schemas import (
@@ -210,6 +209,37 @@ class AllMachineRepository:
         await self._validate_fk(CompanyModel, data.company_id, "Company")
         await self._validate_fk(CarStatusModel, data.status_id, "Status")  # ← YENİ
 
+    async def _ensure_unique_fields(
+        self,
+        vin_no: str | None,
+        plate_no: str | None,
+        exclude_id: int | None = None,
+    ) -> None:
+        """Return a friendly 409 before the DB raises a unique violation."""
+        if vin_no:
+            query = select(AllMachineModel.id).where(
+                AllMachineModel.vin_no == vin_no
+            )
+            if exclude_id is not None:
+                query = query.where(AllMachineModel.id != exclude_id)
+            if (await self.db.execute(query.limit(1))).scalar_one_or_none() is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Bu VIN nömrəsi artıq mövcuddur",
+                )
+
+        if plate_no:
+            query = select(AllMachineModel.id).where(
+                AllMachineModel.plate_no == plate_no
+            )
+            if exclude_id is not None:
+                query = query.where(AllMachineModel.id != exclude_id)
+            if (await self.db.execute(query.limit(1))).scalar_one_or_none() is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Bu plate nömrəsi artıq mövcuddur",
+                )
+
     # ---------- CREATE ----------
     async def create(
         self,
@@ -219,16 +249,8 @@ class AllMachineRepository:
         # 1) FK-ları yoxla
         await self._validate_all_fks(data)
 
-        # 2) VIN unikal yoxla (əgər verilibsə)
-        if data.vin_no:
-            existing = await self.db.execute(
-                select(AllMachineModel).where(AllMachineModel.vin_no == data.vin_no)
-            )
-            if existing.scalar_one_or_none():
-                raise HTTPException(
-                    status_code=409,
-                    detail="Bu VIN nömrəsi artıq mövcuddur",
-                )
+        # 2) VIN / plate unikal yoxla (əgər verilibsə)
+        await self._ensure_unique_fields(data.vin_no, data.plate_no)
 
         # 3) Yarat
         machine = AllMachineModel(
@@ -240,6 +262,12 @@ class AllMachineRepository:
         try:
             await self.db.commit()
             await self.db.refresh(machine)
+        except IntegrityError:
+            await self.db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="VIN və ya plate nömrəsi artıq mövcuddur",
+            )
         except Exception:
             await self.db.rollback()
             raise
@@ -247,88 +275,6 @@ class AllMachineRepository:
         return machine
 
     # ---------- FETCH (PAGINATION İLƏ) ----------
-        # repositories/machines_repository.py (dəyişdir)
-
-        # repositories/machines_repository.py (dəyişdir)
-
-        async def fetch_paginated(
-                self,
-                limit: int = 20,
-                offset: int = 0,
-                # Filterlər
-                identification_no: str | None = None,
-                vin_no: str | None = None,
-                territory_id: int | None = None,
-                type_id: int | None = None,
-                subtype_id: int | None = None,
-                car_mark_id: int | None = None,
-                car_model_id: int | None = None,
-                company_id: int | None = None,
-                created_by_id: int | None = None,
-                production_year: int | None = None,
-        ) -> dict:
-            # Limit / offset yoxlama
-            if limit < 1:
-                limit = 20
-            if limit > 100:
-                limit = 100
-            if offset < 0:
-                offset = 0
-
-            # Base query
-            query = select(AllMachineModel)
-
-            # Filtrlər
-            filters = []
-
-            if identification_no:
-                filters.append(
-                    AllMachineModel.identification_no.ilike(f"%{identification_no}%")
-                )
-            if vin_no:
-                filters.append(
-                    AllMachineModel.vin_no.ilike(f"%{vin_no}%")
-                )
-            if territory_id is not None:
-                filters.append(AllMachineModel.territory_id == territory_id)
-            if type_id is not None:
-                filters.append(AllMachineModel.type_id == type_id)
-            if subtype_id is not None:
-                filters.append(AllMachineModel.subtype_id == subtype_id)
-            if car_mark_id is not None:
-                filters.append(AllMachineModel.car_mark_id == car_mark_id)
-            if car_model_id is not None:
-                filters.append(AllMachineModel.car_model_id == car_model_id)
-            if company_id is not None:
-                filters.append(AllMachineModel.company_id == company_id)
-            if created_by_id is not None:
-                filters.append(AllMachineModel.created_by_id == created_by_id)
-            if production_year is not None:
-                # production_year DateTime-dır, ona görə il aralığını yoxlayırıq
-                year_start = datetime(production_year, 1, 1, tzinfo=timezone.utc)
-                year_end = datetime(production_year, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
-                filters.append(AllMachineModel.production_year >= year_start)
-                filters.append(AllMachineModel.production_year <= year_end)
-
-            if filters:
-                query = query.where(*filters)
-
-            # Items (desc by id, limit + offset)
-            query = (
-                query
-                .order_by(AllMachineModel.id.desc())
-                .offset(offset)
-                .limit(limit)
-            )
-            items_result = await self.db.execute(query)
-            items = list(items_result.scalars().all())
-
-            return {
-                "limit": limit,
-                "offset": offset,
-                "items": items,
-            }
-
     async def fetch_paginated(
             self,
             limit: int = 20,
@@ -437,27 +383,27 @@ class AllMachineRepository:
         # FK-ları yoxla
         await self._validate_all_fks(data)
 
-        # VIN unikal yoxla (özündən başqa)
-        if data.vin_no:
-            existing = await self.db.execute(
-                select(AllMachineModel).where(
-                    AllMachineModel.vin_no == data.vin_no,
-                    AllMachineModel.id != machine_id,
-                )
-            )
-            if existing.scalar_one_or_none():
-                raise HTTPException(
-                    status_code=409,
-                    detail="Bu VIN nömrəsi artıq mövcuddur",
-                )
+        # VIN / plate unikal yoxla (özündən başqa)
+        await self._ensure_unique_fields(
+            data.vin_no, data.plate_no, exclude_id=machine_id
+        )
 
-        # Sahələri yenilə
-        for field, value in data.model_dump(exclude_unset=True).items():
+        # Sahələri yenilə (yalnız göndərilənlər)
+        update_data = data.model_dump(exclude_unset=True)
+        if update_data.get("status_id") is None:
+            update_data.pop("status_id", None)
+        for field, value in update_data.items():
             setattr(machine, field, value)
 
         try:
             await self.db.commit()
             await self.db.refresh(machine)
+        except IntegrityError:
+            await self.db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="VIN və ya plate nömrəsi artıq mövcuddur",
+            )
         except Exception:
             await self.db.rollback()
             raise

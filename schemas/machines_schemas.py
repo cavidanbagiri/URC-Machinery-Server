@@ -120,7 +120,7 @@ class CreateAllMachineSchema(BaseModel):
     car_mark_id: Optional[int] = None
     car_model_id: Optional[int] = None
     company_id: Optional[int] = None
-    status_id: Optional[int] = 1        # ← BURADA OLmalıdır
+    status_id: int = Field(default=1, ge=1)        # ← BURADA OLmalıdır
 
 
 class UpdateAllMachineSchema(CreateAllMachineSchema):

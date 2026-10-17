@@ -96,6 +96,7 @@ class TokenModel(Base):
         Integer,
         ForeignKey("users.id"),
         nullable=False,
+        unique=True,
         index=True
     )
 

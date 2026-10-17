@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import Response
 
 from auth.token_handler import TokenHandler
+from core.cookies import refresh_cookie_options
 
 from models.user_model import TokenModel
 
@@ -24,23 +25,37 @@ class VerifyRefreshTokenMiddleware:
         refresh_token = request.cookies.get('refresh_token')
 
         if not refresh_token:
-            raise HTTPException(status_code=400, detail="Please login before executing")
+            raise HTTPException(status_code=401, detail="Please login before executing")
 
         try:
-
-            # Check if the new refresh token already exists in the database
+            # The token must exist in the DB (revoked/rotated tokens are rejected).
             user_id = await SearchRefreshTokenRepository(self.db).search_refresh_token(refresh_token)
 
             if user_id is None:
                 raise HTTPException(status_code=401, detail="Invalid or revoked refresh token")
 
+            secret_key = os.getenv('JWT_REFRESH_SECRET_KEY')
+            algorithm = os.getenv('JWT_ALGORITHM')
+            if not secret_key or not algorithm:
+                raise HTTPException(status_code=500, detail="Server configuration error")
 
-            # Decode the refresh token
             payload = jwt.decode(
                 refresh_token,
-                os.getenv('JWT_REFRESH_SECRET_KEY'),
-                algorithms=[os.getenv('JWT_ALGORITHM')]
+                secret_key,
+                algorithms=[algorithm],
             )
+
+            subject = payload.get('sub')
+            try:
+                token_user_id = int(subject)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+            if token_user_id != int(user_id):
+                raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+            if "exp" not in payload:
+                raise HTTPException(status_code=401, detail="Invalid refresh token")
 
             # Access token always updated
             access_token = TokenHandler.generate_access_token(payload)
@@ -50,16 +65,14 @@ class VerifyRefreshTokenMiddleware:
             now = datetime.now(timezone.utc)
             if exp - now < timedelta(days=7):
                 new_refresh_token = TokenHandler.generate_refresh_token(payload)
-                await UpdateRefreshTokenRepository(self.db).update_refresh_token(int(payload['sub']), new_refresh_token)
-
+                await UpdateRefreshTokenRepository(self.db).update_refresh_token(
+                    token_user_id, new_refresh_token
+                )
                 response.set_cookie(
                     key="refresh_token",
                     value=new_refresh_token,
-                    httponly=True,
-                    secure=True,  # Ensure this is True in production
-                    samesite="none",
+                    **refresh_cookie_options(),
                 )
-
             else:
                 new_refresh_token = refresh_token
 
@@ -69,15 +82,17 @@ class VerifyRefreshTokenMiddleware:
                 'user': payload
             }
 
-
+        except HTTPException:
+            raise
         except jwt.ExpiredSignatureError:
             raise HTTPException(status_code=401, detail="Expired refresh token")
-
-        except jwt.InvalidTokenError as e:
+        except jwt.InvalidTokenError:
             raise HTTPException(status_code=401, detail="Invalid refresh token")
-
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"An error occurred while validating the refresh token, {e}")
+        except Exception:
+            raise HTTPException(
+                status_code=500,
+                detail="An error occurred while validating the refresh token",
+            )
 
 
 class UpdateRefreshTokenRepository:
@@ -93,11 +108,16 @@ class UpdateRefreshTokenRepository:
         """
         try:
             await self.db.execute(
-                update(TokenModel).where(TokenModel.user_id == user_id).values(refresh_token=refresh_token)
+                update(TokenModel)
+                .where(TokenModel.user_id == user_id)
+                .values(refresh_token=refresh_token)
             )
             await self.db.commit()
-        except Exception as e:
-            raise HTTPException (status_code=404, detail = f"Error updating refresh token: {str(e)}")
+        except Exception:
+            await self.db.rollback()
+            raise HTTPException(
+                status_code=500, detail="Error updating refresh token"
+            )
 
 
 
@@ -135,16 +155,8 @@ class SearchRefreshTokenRepository:
 
     async def search_refresh_token(self, refresh_token: str):
 
-        try:
-            token = await self.db.execute(
-                select(TokenModel).where(TokenModel.refresh_token == refresh_token)
-            )
-
-            token = token.scalar()
-            if token:
-                return token.user_id
-            else:
-                return None
-
-        except Exception as e:
-            raise
+        result = await self.db.execute(
+            select(TokenModel).where(TokenModel.refresh_token == refresh_token)
+        )
+        token = result.scalars().first()
+        return token.user_id if token else None

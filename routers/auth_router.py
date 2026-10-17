@@ -1,4 +1,5 @@
 
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Response, HTTPException, Request
@@ -7,12 +8,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth.refresh_token_handler import VerifyRefreshTokenMiddleware
 from auth.token_handler import TokenHandler
+from core.cookies import delete_cookie_options, refresh_cookie_options
 from database.setup import get_db
+from dependencies.auth import get_current_user
+from models.user_model import UserModel
 
 from repositories.auth_repository import UserRegisterRepository, UserLoginRepository, UserLogoutRepository
 
 from schemas import auth_schemas
 from schemas.auth_schemas import UserLoginSchema
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -23,63 +29,58 @@ async def register(response: Response, register_data: auth_schemas.UserRegisterS
     repository = UserRegisterRepository(db_session)
 
     try:
-        print(register_data)
         data = await repository.register(register_data)
 
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
 
-        response.set_cookie('refresh_token', data.get('refresh_token'),
-                            httponly=True,
-                            secure=True,
-                            samesite="none"
-                            )
+        response.set_cookie(
+            'refresh_token',
+            data.get('refresh_token'),
+            **refresh_cookie_options(),
+        )
 
         return {
             'user': data.get('user'),
             'access_token': data.get('access_token')
         }
 
-    except HTTPException as ex:
-        raise ex
-    except Exception as ex:
-        print('ex is ', ex)
-        raise HTTPException(500, f'Internal server error {ex}')
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Registration failed")
+        raise HTTPException(500, 'Internal server error')
 
 
 
 
 
-@router.post('/login', status_code=201)
+@router.post('/login', status_code=200)
 async def login(response: Response, login_data: UserLoginSchema, db_session: Annotated[AsyncSession,  Depends(get_db)]):
 
     repository = UserLoginRepository(db_session)
 
     try:
-        print(login_data)
         data = await repository.login(login_data)
-
 
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
 
-        response.set_cookie('refresh_token', data.get('refresh_token'),
-                            httponly=True,
-                            secure=True,
-                            samesite="none"
-                            )
-        print({
-            'user': data.get('user'),
-            'access_token': data.get('access_token')
-        })
+        response.set_cookie(
+            'refresh_token',
+            data.get('refresh_token'),
+            **refresh_cookie_options(),
+        )
+
         return {
             'user': data.get('user'),
             'access_token': data.get('access_token')
         }
 
-    except HTTPException as ex:
-        raise ex
-    except Exception as ex:  # Catch all other exceptions
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Login failed")
         raise HTTPException(500, 'Internal server error')
 
 
@@ -91,22 +92,40 @@ async def refresh_token(response: Response, request: Request, db: AsyncSession =
     try:
         user_info = await middleware.validate_refresh_token(request, response)
         if not user_info:
-            response.delete_cookie(key="refresh_token")
             raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
 
-        completed_user = await UserLoginRepository.get_user_with_profile(db, int(user_info.get('user').get('sub')))
+        payload = user_info.get('user') or {}
+        try:
+            user_id = int(payload.get('sub'))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+        completed_user = await UserLoginRepository.get_user_with_profile(db, user_id)
 
         return {
             "access_token": user_info.get("access_token"),
             "user": completed_user,
         }
 
-    except HTTPException as e:
+    except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"An error occurred while refreshing the token {e}")
+    except Exception:
+        logger.exception("Token refresh failed")
+        raise HTTPException(
+            status_code=500,
+            detail="An error occurred while refreshing the token",
+        )
 
 
+
+
+@router.get('/me', status_code=200)
+async def me(
+    current_user: Annotated[UserModel, Depends(get_current_user)],
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the authenticated user's public profile."""
+    return await UserLoginRepository.get_user_with_profile(db, current_user.id)
 
 
 @router.post('/logout', status_code=200)
@@ -119,14 +138,7 @@ async def logout(
     refresh_token = request.cookies.get("refresh_token")
 
     if not refresh_token:
-        # If no refresh token exists, just return success (already logged out)
-        response.delete_cookie(
-            key="refresh_token",
-            secure=True,
-            samesite="none",
-            httponly=True,
-            path="/"
-        )
+        response.delete_cookie(key="refresh_token", **delete_cookie_options())
         return {"message": "Logout successful"}
 
     user_logout_repository = UserLogoutRepository(db)
@@ -136,38 +148,19 @@ async def logout(
         user_id = int(user_payload.get('sub'))
 
         # Perform server-side logout
-        result = await user_logout_repository.logout(user_id)
-
-        # Always clear the cookie regardless of server-side result
-        response.delete_cookie(
-            key="refresh_token",
-            secure=True,
-            samesite="none",
-            httponly=True,
-            path="/"
-        )
+        await user_logout_repository.logout(user_id)
 
         return {"message": "Logout successful"}
 
-    except HTTPException as ex:
-        # Even if token verification fails, clear the cookie
-        response.delete_cookie(
-            key="refresh_token",
-            secure=True,
-            samesite="none",
-            httponly=True,
-            path="/"
-        )
+    except (HTTPException, TypeError, ValueError):
+        # Even if token verification fails, logout is idempotent.
         return {"message": "Logout successful"}
 
-    except Exception as e:
-        # Clear cookie on any error
-        response.delete_cookie(
-            key="refresh_token",
-            secure=True,
-            samesite="none",
-            httponly=True,
-            path="/"
-        )
+    except Exception:
+        logger.exception("Logout failed")
         return {"message": "Logout successful"}
+
+    finally:
+        # Always clear the cookie regardless of server-side result.
+        response.delete_cookie(key="refresh_token", **delete_cookie_options())
 

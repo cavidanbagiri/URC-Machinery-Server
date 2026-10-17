@@ -1,23 +1,32 @@
 
 
 
+import os
+from pathlib import Path
+
 from dotenv import load_dotenv
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from routers import auth_router, machines_router
+# Load server/.env before importing routers: database.setup reads env at import.
+load_dotenv(Path(__file__).resolve().parent / ".env")
+
+from routers import auth_router, machines_router  # noqa: E402
 
 app = FastAPI()
 
 
-load_dotenv()
-
-
-origins = [
+default_origins = [
     "http://localhost:5173",
     "https://urc-machinery-web.onrender.com"
 ]
+configured_origins = [
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGINS", "").split(",")
+    if origin.strip()
+]
+origins = configured_origins or default_origins
 
 app.add_middleware(
     CORSMiddleware,
@@ -30,6 +39,11 @@ app.add_middleware(
 
 app.include_router(router = auth_router.router, prefix="/api/auth", tags=["User"])
 app.include_router(router = machines_router.router, prefix="/api/machines", tags=["Machines"])
+
+
+@app.get("/api/health", tags=["Health"])
+async def health():
+    return {"status": "ok"}
 
 
 

@@ -1,8 +1,8 @@
-from datetime import timedelta
+import asyncio
 from typing import Union, Dict, Any
 
 from fastapi import HTTPException
-from sqlalchemy import select, delete, insert, func
+from sqlalchemy import select, delete
 from sqlalchemy.exc import NoResultFound, DBAPIError
 
 from sqlalchemy.orm import selectinload
@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth.refresh_token_handler import DeleteRefreshTokenRepository
 from auth.token_handler import TokenHandler
+from core.permissions import DEFAULT_REGISTRATION_STATUS_ID
 from models.user_model import UserModel, TokenModel, StatusModel
 from schemas.auth_schemas import UserLoginSchema
 from utils.hash_password import PasswordHash
@@ -21,26 +22,14 @@ class RefreshTokenRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def manage_refresh_token(self, user_id:int, refresh_token) -> None:
-
-        try:
-            token = await self.find_refresh_token(user_id)
-            if token:
-                await self.delete_refresh_token(user_id)
-            await self.save_refresh_token(user_id, refresh_token)
-        except Exception as ex:
-            raise HTTPException(status_code=404, detail=f'Manage refresh token error ')
-
     async def find_refresh_token(self, user_id: int) -> Union[TokenModel, None]:
-        try:
-            token = await self.db.execute(select(TokenModel).where(TokenModel.user_id == user_id))
-            data = token.scalar()
-            if data:
-                return data
-            else:
-                return None
-        except Exception as ex:
-            raise HTTPException(status_code=404, detail=f"Refresh token not found")
+        result = await self.db.execute(
+            select(TokenModel)
+            .where(TokenModel.user_id == user_id)
+            .order_by(TokenModel.id.desc())
+            .limit(1)
+        )
+        return result.scalars().first()
 
     async def delete_refresh_token(self, user_id: int) -> None:
         try:
@@ -55,9 +44,12 @@ class RefreshTokenRepository:
         try:
             # Add await here - this was likely missing
             result = await self.db.execute(
-                select(TokenModel).where(TokenModel.user_id == user_id)
+                select(TokenModel)
+                .where(TokenModel.user_id == user_id)
+                .order_by(TokenModel.id.desc())
+                .limit(1)
             )
-            token_record = result.scalar_one_or_none()
+            token_record = result.scalars().first()
 
             expires_at = datetime.now(timezone.utc) + timedelta(days=30)
 
@@ -78,10 +70,9 @@ class RefreshTokenRepository:
 
             await self.db.commit()
             return True
-        except Exception as e:
-            await self.db.rollback()  # Add await here
-            print(f"Error saving token: {e}")
-            raise HTTPException(status_code=500, detail=f"Token save failed: {str(e)}")
+        except Exception:
+            await self.db.rollback()
+            raise HTTPException(status_code=500, detail="Token save failed")
 
 
 class UserRegisterRepository:
@@ -90,29 +81,47 @@ class UserRegisterRepository:
         self.refresh_token_repo = RefreshTokenRepository(self.db)
         self.h_password = PasswordHash()
 
-    # auth_repository.py - Fixed register method
     async def register(self, register_data):
         # Check email
-        data = await self.db.execute(select(UserModel).where(UserModel.email == register_data.email.lower()))
-        user = data.scalar()
-        if user:
+        data = await self.db.execute(
+            select(UserModel).where(UserModel.email == register_data.email.lower())
+        )
+        if data.scalars().first():
             raise HTTPException(status_code=409, detail="Email already exists")
 
-        # Hash password
-        register_data.password = self.h_password.hash_password(register_data.password)
+        # Public registration must never be able to choose a privileged role.
+        status_result = await self.db.execute(
+            select(StatusModel.id).where(
+                StatusModel.id == DEFAULT_REGISTRATION_STATUS_ID
+            )
+        )
+        if status_result.scalar_one_or_none() is None:
+            # Migration/seed data is missing; fail explicitly instead of a 500 FK error.
+            raise HTTPException(
+                status_code=503,
+                detail="Registration is temporarily unavailable",
+            )
 
-        # Create user
+        # Argon2 hashing is CPU-bound; keep it off the event loop.
+        hashed_password = await asyncio.to_thread(
+            self.h_password.hash_password, register_data.password
+        )
+
         user = UserModel(
-            firstname=register_data.firstname.lower(),
-            lastname=register_data.lastname.lower(),
+            firstname=register_data.firstname.strip().lower(),
+            lastname=register_data.lastname.strip().lower(),
             email=register_data.email.lower(),
-            password=register_data.password,
-            status_id=register_data.status_id,
+            password=hashed_password,
+            status_id=DEFAULT_REGISTRATION_STATUS_ID,
         )
 
         self.db.add(user)
-        await self.db.commit()
-        await self.db.refresh(user)
+        try:
+            await self.db.commit()
+            await self.db.refresh(user)
+        except Exception:
+            await self.db.rollback()
+            raise
 
         # Generate tokens
         token_data = {'sub': str(user.id), 'username': user.firstname + ' ' + user.lastname}
@@ -161,10 +170,9 @@ class CheckUserAvailable:
             pass_verify = await self.h_password.verify(user.password, login_data.password)
             if pass_verify:
                 return user
-            else:
-                raise HTTPException(status_code=404, detail="Password is wrong")
-        else:
-            raise HTTPException(status_code=404, detail="User not found")
+
+        # Same response for unknown email and wrong password: no account enumeration.
+        raise HTTPException(status_code=401, detail="Email or password is incorrect")
 
 class UserLoginRepository:
 
@@ -203,8 +211,10 @@ class UserLoginRepository:
                 'access_token': access_token,
                 'refresh_token': refresh_token
             }
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"{str(e)}")
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=500, detail="Login failed")
 
     @staticmethod
     async def get_user_with_profile(db: AsyncSession, user_id: int) -> Dict[str, Any]:
@@ -237,8 +247,10 @@ class UserLoginRepository:
             }
 
 
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error fetching user: {str(e)}")
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=500, detail="Error fetching user")
 
 
 class UserLogoutRepository:

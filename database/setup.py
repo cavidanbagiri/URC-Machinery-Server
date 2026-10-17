@@ -2,19 +2,47 @@
 
 # production
 import os
+from pathlib import Path
+from urllib.parse import quote_plus
+
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
-DB_USER = os.getenv('DB_USER')
-DB_PASSWORD = os.getenv('DB_PASSWORD')
-DB_HOST = os.getenv('DB_HOST')
-DB_PORT = os.getenv('DB_PORT')
-DB_NAME = os.getenv('DB_NAME')
+def _build_connection_string() -> str:
+    """Build the async DB URL from env vars.
 
-connection_string = f'postgresql+asyncpg://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}'
+    Render exposes ``DATABASE_URL``; local development uses the five ``DB_*``
+    variables. Credentials are URL-encoded so special characters are safe.
+    """
+    database_url = os.getenv("DATABASE_URL")
+    if database_url:
+        if database_url.startswith("postgres://"):
+            return "postgresql+asyncpg://" + database_url[len("postgres://"):]
+        if database_url.startswith("postgresql://"):
+            return "postgresql+asyncpg://" + database_url[len("postgresql://"):]
+        if database_url.startswith("postgresql+psycopg2://"):
+            return "postgresql+asyncpg://" + database_url[len("postgresql+psycopg2://"):]
+        return database_url
+
+    required = ("DB_USER", "DB_PASSWORD", "DB_HOST", "DB_PORT", "DB_NAME")
+    missing = [name for name in required if not os.getenv(name)]
+    if missing:
+        raise RuntimeError(
+            "Missing database configuration: " + ", ".join(missing)
+        )
+
+    return (
+        f"postgresql+asyncpg://{os.getenv('DB_USER')}:"
+        f"{quote_plus(os.getenv('DB_PASSWORD'))}@"
+        f"{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/"
+        f"{os.getenv('DB_NAME')}"
+    )
+
+
+connection_string = _build_connection_string()
 
 engine = create_async_engine(
     connection_string,

@@ -1,11 +1,13 @@
 # routers/machines_router.py
-from typing import Annotated
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.setup import get_db
+from dependencies.auth import get_current_user
 from dependencies.permissions import require_write_permission
+from models.user_model import UserModel
 from repositories.machines_repository import (
     TerritoryRepository,
     TypeTransportRepository,
@@ -27,7 +29,9 @@ from schemas.machines_schemas import (
 
 )
 
-router = APIRouter()
+# Every machine/lookup endpoint requires a valid access token. Write endpoints
+# additionally enforce require_write_permission below.
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 # =========================================================
@@ -435,10 +439,6 @@ async def delete_company(
 
 
 # routers/machines_router.py (əlavə)
-from typing import Optional
-
-from dependencies.auth import get_current_user
-from models.user_model import UserModel
 from repositories.machines_repository import AllMachineRepository
 from schemas.machines_schemas import (
     CreateAllMachineSchema,

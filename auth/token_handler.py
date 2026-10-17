@@ -14,41 +14,61 @@ class TokenHandler:
     def generate_access_token(user_data: dict) -> str:  # SYNC method
         try:
             encode = user_data.copy()
-            encode.update({"exp": datetime.now(timezone.utc) + timedelta(days=2)})
+            encode.update({
+                "iat": datetime.now(timezone.utc),
+                "exp": datetime.now(timezone.utc) + timedelta(days=2),
+            })
             secret_key = os.getenv('JWT_SECRET_KEY')
             algorithm = os.getenv('JWT_ALGORITHM')
-            access_token = jwt.encode(encode, secret_key, algorithm)
-            return access_token
-        except Exception as ex:
-            raise HTTPException(status_code=500, detail=f"Failed to create access token {ex}")
+            if not secret_key or not algorithm:
+                raise HTTPException(status_code=500, detail="Server configuration error")
+            return jwt.encode(encode, secret_key, algorithm)
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=500, detail="Failed to create access token")
 
     @staticmethod
     def generate_refresh_token(user_data: dict) -> str:  # SYNC method
         try:
             encode = user_data.copy()
-            encode.update({"exp": datetime.now(timezone.utc) + timedelta(days=30)})
+            encode.update({
+                "iat": datetime.now(timezone.utc),
+                "exp": datetime.now(timezone.utc) + timedelta(days=30),
+            })
             secret_key = os.getenv('JWT_REFRESH_SECRET_KEY')
             algorithm = os.getenv('JWT_ALGORITHM')
-            refresh_token = jwt.encode(encode, secret_key, algorithm)
-            return refresh_token
-        except Exception as ex:
-            raise HTTPException(status_code=500, detail=f"Failed to create refresh token {ex}")
+            if not secret_key or not algorithm:
+                raise HTTPException(status_code=500, detail="Server configuration error")
+            return jwt.encode(encode, secret_key, algorithm)
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=500, detail="Failed to create refresh token")
 
     @staticmethod
     def verify_access_token(req: Request) -> dict:
-        if req.headers.get('Authorization'):
-            access_token = req.headers.get('Authorization').split(' ')[1]
-            if access_token:
-                try:
-                    secret_key = os.getenv('JWT_SECRET_KEY')
-                    algorithm = os.getenv('JWT_ALGORITHM')
-                    payload = jwt.decode(access_token, secret_key, algorithm)
-                    return payload
-                except InvalidTokenError as ex:
-                    raise HTTPException(status_code=401, detail=f'Authorization Error {ex}')
-            else:
-                raise HTTPException(status_code=401, detail='Authorization Error')
-        else:
+        authorization = req.headers.get('Authorization')
+        if not authorization:
+            raise HTTPException(status_code=401, detail='Authorization Error')
+
+        scheme, separator, access_token = authorization.partition(' ')
+        access_token = access_token.strip()
+
+        if not separator or scheme.lower() != 'bearer' or not access_token:
+            raise HTTPException(status_code=401, detail='Authorization Error')
+
+        secret_key = os.getenv('JWT_SECRET_KEY')
+        algorithm = os.getenv('JWT_ALGORITHM')
+        if not secret_key or not algorithm:
+            raise HTTPException(status_code=500, detail='Server configuration error')
+
+        try:
+            payload = jwt.decode(access_token, secret_key, algorithms=[algorithm])
+            return payload
+        except ExpiredSignatureError:
+            raise HTTPException(status_code=401, detail='Access token expired')
+        except InvalidTokenError:
             raise HTTPException(status_code=401, detail='Authorization Error')
 
     @staticmethod
@@ -79,9 +99,11 @@ class TokenHandler:
 
             return payload
 
+        except HTTPException:
+            raise
         except jwt.ExpiredSignatureError:
             raise HTTPException(status_code=401, detail="Refresh token expired")
-        except jwt.InvalidTokenError as e:
+        except jwt.InvalidTokenError:
             raise HTTPException(status_code=401, detail="Invalid refresh token")
-        except Exception as e:
+        except Exception:
             raise HTTPException(status_code=500, detail="Token verification failed")
