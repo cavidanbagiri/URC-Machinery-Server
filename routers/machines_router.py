@@ -53,7 +53,7 @@ async def create_territory(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Territory yaradıla bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Bölge oluşturulamadı: {e}")
 
 
 @router.get("/fetch_territories", response_model=list[FetchTerritorySchema])
@@ -63,7 +63,7 @@ async def fetch_territories(db: Annotated[AsyncSession, Depends(get_db)]):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Territory-lər gətirilə bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Bölgeler getirilemedi: {e}")
 
 
 @router.put(
@@ -81,7 +81,7 @@ async def update_territory(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Territory yenilənə bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Bölge güncellenemedi: {e}")
 
 
 @router.delete(
@@ -98,7 +98,7 @@ async def delete_territory(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Territory silinə bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Bölge silinemedi: {e}")
 
 
 # =========================================================
@@ -120,7 +120,7 @@ async def create_type_transport(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Type Transport yaradıla bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Taşıma tipi oluşturulamadı: {e}")
 
 
 @router.get("/fetch_type_transports", response_model=list[FetchTypeTransportSchema])
@@ -130,7 +130,7 @@ async def fetch_type_transports(db: Annotated[AsyncSession, Depends(get_db)]):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Type Transport-lar gətirilə bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Taşıma tipleri getirilemedi: {e}")
 
 
 @router.put(
@@ -148,7 +148,7 @@ async def update_type_transport(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Type Transport yenilənə bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Taşıma tipi güncellenemedi: {e}")
 
 
 @router.delete(
@@ -165,7 +165,7 @@ async def delete_type_transport(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Type Transport silinə bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Taşıma tipi silinemedi: {e}")
 
 
 # =========================================================
@@ -187,7 +187,7 @@ async def create_sub_type_transport(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"SubType Transport yaradıla bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Alt taşıma tipi oluşturulamadı: {e}")
 
 
 @router.get("/fetch_sub_type_transports", response_model=list[FetchSubTypeTransportSchema])
@@ -197,7 +197,7 @@ async def fetch_sub_type_transports(db: Annotated[AsyncSession, Depends(get_db)]
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"SubType Transport-lar gətirilə bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Alt taşıma tipleri getirilemedi: {e}")
 
 
 @router.put(
@@ -215,7 +215,7 @@ async def update_sub_type_transport(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"SubType Transport yenilənə bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Alt taşıma tipi güncellenemedi: {e}")
 
 
 @router.delete(
@@ -232,7 +232,7 @@ async def delete_sub_type_transport(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"SubType Transport silinə bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Alt taşıma tipi silinemedi: {e}")
 
 
 # =========================================================
@@ -254,7 +254,7 @@ async def create_car_mark(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Car Mark yaradıla bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Marka oluşturulamadı: {e}")
 
 
 @router.get("/fetch_car_marks", response_model=list[FetchCarMarkSchema])
@@ -264,7 +264,7 @@ async def fetch_car_marks(db: Annotated[AsyncSession, Depends(get_db)]):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Car Mark-lar gətirilə bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Markalar getirilemedi: {e}")
 
 
 @router.put(
@@ -282,7 +282,7 @@ async def update_car_mark(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Car Mark yenilənə bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Marka güncellenemedi: {e}")
 
 
 @router.delete(
@@ -299,7 +299,7 @@ async def delete_car_mark(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Car Mark silinə bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Marka silinemedi: {e}")
 
 
 # =========================================================
@@ -321,7 +321,7 @@ async def create_car_model(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Car Model yaradıla bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Model oluşturulamadı: {e}")
 
 
 @router.get("/fetch_car_models", response_model=list[FetchCarModelSchema])
@@ -331,7 +331,7 @@ async def fetch_car_models(db: Annotated[AsyncSession, Depends(get_db)]):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Car Model-lar gətirilə bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Modeller getirilemedi: {e}")
 
 
 @router.put(
@@ -349,7 +349,7 @@ async def update_car_model(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Car Model yenilənə bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Model güncellenemedi: {e}")
 
 
 @router.delete(
@@ -366,7 +366,7 @@ async def delete_car_model(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Car Model silinə bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Model silinemedi: {e}")
 
 
 # =========================================================
@@ -388,7 +388,7 @@ async def create_company(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Company yaradıla bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Şirket oluşturulamadı: {e}")
 
 
 @router.get("/fetch_companies", response_model=list[FetchCompanySchema])
@@ -398,7 +398,7 @@ async def fetch_companies(db: Annotated[AsyncSession, Depends(get_db)]):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Company-lər gətirilə bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Şirketler getirilemedi: {e}")
 
 
 @router.put(
@@ -416,7 +416,7 @@ async def update_company(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Company yenilənə bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Şirket güncellenemedi: {e}")
 
 
 @router.delete(
@@ -433,7 +433,7 @@ async def delete_company(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Company silinə bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Şirket silinemedi: {e}")
 
 
 
@@ -469,7 +469,7 @@ async def create_machine(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Machine yaradıla bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Makine oluşturulamadı: {e}")
 
 
 
@@ -516,7 +516,7 @@ async def fetch_machines(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Machine-lar gətirilə bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Makineler getirilemedi: {e}")
 
 
 
@@ -535,7 +535,7 @@ async def fetch_machine(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Machine gətirilə bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Makine getirilemedi: {e}")
 
 
 
@@ -556,7 +556,7 @@ async def update_machine(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Machine yenilənə bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Makine güncellenemedi: {e}")
 
 
 @router.delete(
@@ -574,7 +574,7 @@ async def delete_machine(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Machine silinə bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Makine silinemedi: {e}")
 
 
 
@@ -597,7 +597,7 @@ async def create_car_status(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Status yaradıla bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Durum oluşturulamadı: {e}")
 
 
 @router.get("/fetch_car_statuses", response_model=list[FetchCarStatusSchema])
@@ -607,7 +607,7 @@ async def fetch_car_statuses(db: Annotated[AsyncSession, Depends(get_db)]):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Statuslar gətirilə bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Durumlar getirilemedi: {e}")
 
 
 @router.put(
@@ -625,7 +625,7 @@ async def update_car_status(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Status yenilənə bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Durum güncellenemedi: {e}")
 
 
 @router.delete(
@@ -642,7 +642,7 @@ async def delete_car_status(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Status silinə bilmədi: {e}")
+        raise HTTPException(status_code=500, detail=f"Durum silinemedi: {e}")
 
 
 
@@ -662,7 +662,7 @@ async def get_status_statistics(
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Statistika gətirilə bilmədi: {e}",
+            detail=f"İstatistikler getirilemedi: {e}",
         )
 
 
@@ -682,5 +682,5 @@ async def get_pivot_statistics(
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Pivot statistika gətirilə bilmədi: {e}",
+            detail=f"Pivot istatistikleri getirilemedi: {e}",
         )

@@ -35,7 +35,7 @@ class RefreshTokenRepository:
         try:
             await self.db.execute(delete(TokenModel).where(TokenModel.user_id == user_id))
         except Exception as ex:
-            raise HTTPException(status_code=404, detail=f'User id not found ')
+            raise HTTPException(status_code=404, detail='Kullanıcı bulunamadı')
 
     async def save_refresh_token(self, user_id: int, refresh_token: str, access_token: str):
         """Save both access and refresh tokens for user"""
@@ -72,7 +72,7 @@ class RefreshTokenRepository:
             return True
         except Exception:
             await self.db.rollback()
-            raise HTTPException(status_code=500, detail="Token save failed")
+            raise HTTPException(status_code=500, detail="Belirteç kaydedilemedi")
 
 
 class UserRegisterRepository:
@@ -87,7 +87,7 @@ class UserRegisterRepository:
             select(UserModel).where(UserModel.email == register_data.email.lower())
         )
         if data.scalars().first():
-            raise HTTPException(status_code=409, detail="Email already exists")
+            raise HTTPException(status_code=409, detail="Bu e-posta adresi zaten kayıtlı")
 
         # Public registration must never be able to choose a privileged role.
         status_result = await self.db.execute(
@@ -99,7 +99,7 @@ class UserRegisterRepository:
             # Migration/seed data is missing; fail explicitly instead of a 500 FK error.
             raise HTTPException(
                 status_code=503,
-                detail="Registration is temporarily unavailable",
+                detail="Kayıt şu anda kullanılamıyor",
             )
 
         # Argon2 hashing is CPU-bound; keep it off the event loop.
@@ -172,7 +172,7 @@ class CheckUserAvailable:
                 return user
 
         # Same response for unknown email and wrong password: no account enumeration.
-        raise HTTPException(status_code=401, detail="Email or password is incorrect")
+        raise HTTPException(status_code=401, detail="E-posta adresi veya şifre hatalı")
 
 class UserLoginRepository:
 
@@ -214,7 +214,7 @@ class UserLoginRepository:
         except HTTPException:
             raise
         except Exception:
-            raise HTTPException(status_code=500, detail="Login failed")
+            raise HTTPException(status_code=500, detail="Giriş başarısız oldu")
 
     @staticmethod
     async def get_user_with_profile(db: AsyncSession, user_id: int) -> Dict[str, Any]:
@@ -227,7 +227,7 @@ class UserLoginRepository:
             user = result.scalar_one_or_none()
 
             if not user:
-                raise HTTPException(status_code=404, detail="User not found")
+                raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı")
 
             # After finding the user, fetch status text
             status_result = await db.execute(
@@ -250,7 +250,7 @@ class UserLoginRepository:
         except HTTPException:
             raise
         except Exception:
-            raise HTTPException(status_code=500, detail="Error fetching user")
+            raise HTTPException(status_code=500, detail="Kullanıcı bilgileri alınamadı")
 
 
 class UserLogoutRepository:
@@ -266,10 +266,10 @@ class UserLogoutRepository:
         """
         try:
             await DeleteRefreshTokenRepository(self.db).delete_refresh_token(user_id)
-            return {"detail": "Logged out"}
+            return {"detail": "Çıkış yapıldı"}
         except NoResultFound:
-            return {"detail": "Already logged out"}
+            return {"detail": "Oturum zaten kapalı"}
         except DBAPIError as e:
-            raise HTTPException(status_code=500, detail="Internal server error during logout")
+            raise HTTPException(status_code=500, detail="Çıkış yapılırken sunucu hatası oluştu")
         except Exception as e:
-            raise HTTPException(status_code=500, detail="An unexpected error occurred")
+            raise HTTPException(status_code=500, detail="Beklenmeyen bir hata oluştu")

@@ -28,7 +28,7 @@ async def get_current_user(
     if user_id_raw is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token etibarsızdır",
+            detail="Belirteç geçersiz",
         )
 
     try:
@@ -36,7 +36,7 @@ async def get_current_user(
     except (TypeError, ValueError):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token etibarsızdır",
+            detail="Belirteç geçersiz",
         )
 
     result = await db.execute(select(UserModel).where(UserModel.id == user_id))
@@ -45,7 +45,7 @@ async def get_current_user(
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="İstifadəçi tapılmadı",
+            detail="Kullanıcı bulunamadı",
         )
 
     return user

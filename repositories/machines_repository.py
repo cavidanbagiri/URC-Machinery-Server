@@ -35,7 +35,7 @@ class _BaseLookupRepository:
     """
 
     model = None  # subclass override edir
-    label = "Entity"  # xəta mesajları üçün
+    label = "Kayıt"  # hata mesajları için
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -48,7 +48,7 @@ class _BaseLookupRepository:
         if existing.scalar_one_or_none():
             raise HTTPException(
                 status_code=409,
-                detail=f"Bu adda {self.label} artıq mövcuddur",
+                detail=f"Bu ada sahip {self.label} zaten mevcut",
             )
 
         # 2) Yarat
@@ -78,7 +78,7 @@ class _BaseLookupRepository:
         if obj is None:
             raise HTTPException(
                 status_code=404,
-                detail=f"{self.label} tapılmadı",
+                detail=f"{self.label} bulunamadı",
             )
         return obj
 
@@ -95,7 +95,7 @@ class _BaseLookupRepository:
         if existing.scalar_one_or_none():
             raise HTTPException(
                 status_code=409,
-                detail=f"Bu adda {self.label} artıq mövcuddur",
+                detail=f"Bu ada sahip {self.label} zaten mevcut",
             )
 
         obj.name = data.name
@@ -126,7 +126,7 @@ class _BaseLookupRepository:
 
 class TerritoryRepository(_BaseLookupRepository):
     model = TerritoryModel
-    label = "Territory"
+    label = "Bölge"
 
     async def create(self, territory_data: CreateTerritorySchema) -> TerritoryModel:
         return await super().create(territory_data)
@@ -134,7 +134,7 @@ class TerritoryRepository(_BaseLookupRepository):
 
 class TypeTransportRepository(_BaseLookupRepository):
     model = TypeTransportModel
-    label = "Type Transport"
+    label = "Taşıma Tipi"
 
     async def create(self, data: CreateTypeTransportSchema):
         return await super().create(data)
@@ -142,7 +142,7 @@ class TypeTransportRepository(_BaseLookupRepository):
 
 class SubTypeTransportRepository(_BaseLookupRepository):
     model = SubTypeTransportModel
-    label = "SubType Transport"
+    label = "Alt Taşıma Tipi"
 
     async def create(self, data: CreateSubTypeTransportSchema):
         return await super().create(data)
@@ -150,7 +150,7 @@ class SubTypeTransportRepository(_BaseLookupRepository):
 
 class CarMarkRepository(_BaseLookupRepository):
     model = CarMarkModel
-    label = "Car Mark"
+    label = "Marka"
 
     async def create(self, data: CreateCarMarkSchema):
         return await super().create(data)
@@ -158,7 +158,7 @@ class CarMarkRepository(_BaseLookupRepository):
 
 class CarModelRepository(_BaseLookupRepository):
     model = CarModelModel
-    label = "Car Model"
+    label = "Model"
 
     async def create(self, data: CreateCarModelSchema):
         return await super().create(data)
@@ -166,7 +166,7 @@ class CarModelRepository(_BaseLookupRepository):
 
 class CompanyRepository(_BaseLookupRepository):
     model = CompanyModel
-    label = "Company"
+    label = "Şirket"
 
     async def create(self, data: CreateCompanySchema):
         return await super().create(data)
@@ -197,17 +197,17 @@ class AllMachineRepository:
         if result.scalar_one_or_none() is None:
             raise HTTPException(
                 status_code=404,
-                detail=f"{label} (id={obj_id}) tapılmadı",
+                detail=f"{label} (id={obj_id}) bulunamadı",
             )
 
     async def _validate_all_fks(self, data):
-        await self._validate_fk(TerritoryModel, data.territory_id, "Territory")
-        await self._validate_fk(TypeTransportModel, data.type_id, "Type Transport")
-        await self._validate_fk(SubTypeTransportModel, data.subtype_id, "SubType Transport")
-        await self._validate_fk(CarMarkModel, data.car_mark_id, "Car Mark")
-        await self._validate_fk(CarModelModel, data.car_model_id, "Car Model")
-        await self._validate_fk(CompanyModel, data.company_id, "Company")
-        await self._validate_fk(CarStatusModel, data.status_id, "Status")  # ← YENİ
+        await self._validate_fk(TerritoryModel, data.territory_id, "Bölge")
+        await self._validate_fk(TypeTransportModel, data.type_id, "Taşıma Tipi")
+        await self._validate_fk(SubTypeTransportModel, data.subtype_id, "Alt Taşıma Tipi")
+        await self._validate_fk(CarMarkModel, data.car_mark_id, "Marka")
+        await self._validate_fk(CarModelModel, data.car_model_id, "Model")
+        await self._validate_fk(CompanyModel, data.company_id, "Şirket")
+        await self._validate_fk(CarStatusModel, data.status_id, "Durum")  # ← YENİ
 
     async def _ensure_unique_fields(
         self,
@@ -225,7 +225,7 @@ class AllMachineRepository:
             if (await self.db.execute(query.limit(1))).scalar_one_or_none() is not None:
                 raise HTTPException(
                     status_code=409,
-                    detail="Bu VIN nömrəsi artıq mövcuddur",
+                    detail="Bu VIN numarası zaten mevcut",
                 )
 
         if plate_no:
@@ -237,7 +237,7 @@ class AllMachineRepository:
             if (await self.db.execute(query.limit(1))).scalar_one_or_none() is not None:
                 raise HTTPException(
                     status_code=409,
-                    detail="Bu plate nömrəsi artıq mövcuddur",
+                    detail="Bu plaka numarası zaten mevcut",
                 )
 
     # ---------- CREATE ----------
@@ -266,7 +266,7 @@ class AllMachineRepository:
             await self.db.rollback()
             raise HTTPException(
                 status_code=409,
-                detail="VIN və ya plate nömrəsi artıq mövcuddur",
+                detail="Bu VIN veya plaka numarası zaten mevcut",
             )
         except Exception:
             await self.db.rollback()
@@ -369,7 +369,7 @@ class AllMachineRepository:
         )
         machine = result.scalar_one_or_none()
         if machine is None:
-            raise HTTPException(status_code=404, detail="Machine tapılmadı")
+            raise HTTPException(status_code=404, detail="Makine bulunamadı")
         return machine
 
     # ---------- UPDATE ----------
@@ -402,7 +402,7 @@ class AllMachineRepository:
             await self.db.rollback()
             raise HTTPException(
                 status_code=409,
-                detail="VIN və ya plate nömrəsi artıq mövcuddur",
+                detail="Bu VIN veya plaka numarası zaten mevcut",
             )
         except Exception:
             await self.db.rollback()
@@ -542,7 +542,7 @@ class CarStatusRepository:
         if existing.scalar_one_or_none():
             raise HTTPException(
                 status_code=409,
-                detail="Bu adda status artıq mövcuddur",
+                detail="Bu ada sahip durum zaten mevcut",
             )
 
         obj = CarStatusModel(
@@ -573,7 +573,7 @@ class CarStatusRepository:
         )
         obj = result.scalar_one_or_none()
         if obj is None:
-            raise HTTPException(status_code=404, detail="Status tapılmadı")
+            raise HTTPException(status_code=404, detail="Durum bulunamadı")
         return obj
 
     async def update(self, obj_id: int, data: UpdateCarStatusSchema) -> CarStatusModel:
@@ -590,7 +590,7 @@ class CarStatusRepository:
             if existing.scalar_one_or_none():
                 raise HTTPException(
                     status_code=409,
-                    detail="Bu adda status artıq mövcuddur",
+                    detail="Bu ada sahip durum zaten mevcut",
                 )
 
         # Yalnız göndərilən sahələri yenilə
@@ -616,7 +616,7 @@ class CarStatusRepository:
         if in_use.scalar_one_or_none():
             raise HTTPException(
                 status_code=409,
-                detail="Bu status maşınlarda istifadə olunur, silinə bilməz",
+                detail="Bu durum makinelerde kullanıldığı için silinemez",
             )
 
         try:

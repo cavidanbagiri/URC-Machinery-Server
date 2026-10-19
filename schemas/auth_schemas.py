@@ -23,7 +23,7 @@ class UserRegisterSchema(BaseModel):
     def strip_names(cls, value: str) -> str:
         value = value.strip()
         if not value:
-            raise ValueError("Name cannot be blank")
+            raise ValueError("Ad boş olamaz")
         return value
 
 

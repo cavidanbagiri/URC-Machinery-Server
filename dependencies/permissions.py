@@ -21,7 +21,7 @@ async def require_write_permission(
     if value not in WRITE_PERMISSION_VALUES:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Bu əməliyyat üçün icazəniz yoxdur",
+            detail="Bu işlem için izniniz yok",
         )
 
     return current_user

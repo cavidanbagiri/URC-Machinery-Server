@@ -21,10 +21,10 @@ def upgrade() -> None:
     op.execute(
         """
         INSERT INTO car_statuses (id, name, color, description) VALUES
-            (1, 'Aktif', 'green', 'Araç aktif kullanımda'),
-            (2, 'Tamirde', 'yellow', 'Araç tamirde / onarımda'),
-            (3, 'Bakımda', 'blue', 'Araç planlı teknik bakımda'),
-            (4, 'Hurda', 'red', 'Araç kullanım dışı (hurdaya ayrılmış)')
+            (1, 'Aktif', 'green', 'Makine aktif kullanımda'),
+            (2, 'Tamirde', 'yellow', 'Makine tamirde / onarımda'),
+            (3, 'Bakımda', 'blue', 'Makine planlı teknik bakımda'),
+            (4, 'Hurda', 'red', 'Makine kullanım dışı (hurdaya ayrılmış)')
         ON CONFLICT DO NOTHING
         """
     )

@@ -25,19 +25,19 @@ class VerifyRefreshTokenMiddleware:
         refresh_token = request.cookies.get('refresh_token')
 
         if not refresh_token:
-            raise HTTPException(status_code=401, detail="Please login before executing")
+            raise HTTPException(status_code=401, detail="İşlemi gerçekleştirmek için lütfen giriş yapın")
 
         try:
             # The token must exist in the DB (revoked/rotated tokens are rejected).
             user_id = await SearchRefreshTokenRepository(self.db).search_refresh_token(refresh_token)
 
             if user_id is None:
-                raise HTTPException(status_code=401, detail="Invalid or revoked refresh token")
+                raise HTTPException(status_code=401, detail="Yenileme belirteci geçersiz veya iptal edilmiş")
 
             secret_key = os.getenv('JWT_REFRESH_SECRET_KEY')
             algorithm = os.getenv('JWT_ALGORITHM')
             if not secret_key or not algorithm:
-                raise HTTPException(status_code=500, detail="Server configuration error")
+                raise HTTPException(status_code=500, detail="Sunucu yapılandırma hatası")
 
             payload = jwt.decode(
                 refresh_token,
@@ -49,13 +49,13 @@ class VerifyRefreshTokenMiddleware:
             try:
                 token_user_id = int(subject)
             except (TypeError, ValueError):
-                raise HTTPException(status_code=401, detail="Invalid refresh token")
+                raise HTTPException(status_code=401, detail="Yenileme belirteci geçersiz")
 
             if token_user_id != int(user_id):
-                raise HTTPException(status_code=401, detail="Invalid refresh token")
+                raise HTTPException(status_code=401, detail="Yenileme belirteci geçersiz")
 
             if "exp" not in payload:
-                raise HTTPException(status_code=401, detail="Invalid refresh token")
+                raise HTTPException(status_code=401, detail="Yenileme belirteci geçersiz")
 
             # Access token always updated
             access_token = TokenHandler.generate_access_token(payload)
@@ -85,13 +85,13 @@ class VerifyRefreshTokenMiddleware:
         except HTTPException:
             raise
         except jwt.ExpiredSignatureError:
-            raise HTTPException(status_code=401, detail="Expired refresh token")
+            raise HTTPException(status_code=401, detail="Yenileme belirtecinin süresi doldu")
         except jwt.InvalidTokenError:
-            raise HTTPException(status_code=401, detail="Invalid refresh token")
+            raise HTTPException(status_code=401, detail="Yenileme belirteci geçersiz")
         except Exception:
             raise HTTPException(
                 status_code=500,
-                detail="An error occurred while validating the refresh token",
+                detail="Yenileme belirteci doğrulanırken bir hata oluştu",
             )
 
 
@@ -116,7 +116,7 @@ class UpdateRefreshTokenRepository:
         except Exception:
             await self.db.rollback()
             raise HTTPException(
-                status_code=500, detail="Error updating refresh token"
+                status_code=500, detail="Yenileme belirteci güncellenemedi"
             )
 
 

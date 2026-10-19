@@ -49,7 +49,7 @@ async def register(response: Response, register_data: auth_schemas.UserRegisterS
         raise
     except Exception:
         logger.exception("Registration failed")
-        raise HTTPException(500, 'Internal server error')
+        raise HTTPException(500, 'Sunucu hatası')
 
 
 
@@ -81,7 +81,7 @@ async def login(response: Response, login_data: UserLoginSchema, db_session: Ann
         raise
     except Exception:
         logger.exception("Login failed")
-        raise HTTPException(500, 'Internal server error')
+        raise HTTPException(500, 'Sunucu hatası')
 
 
 
@@ -92,13 +92,13 @@ async def refresh_token(response: Response, request: Request, db: AsyncSession =
     try:
         user_info = await middleware.validate_refresh_token(request, response)
         if not user_info:
-            raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+            raise HTTPException(status_code=401, detail="Yenileme belirteci geçersiz veya süresi dolmuş")
 
         payload = user_info.get('user') or {}
         try:
             user_id = int(payload.get('sub'))
         except (TypeError, ValueError):
-            raise HTTPException(status_code=401, detail="Invalid refresh token")
+            raise HTTPException(status_code=401, detail="Yenileme belirteci geçersiz")
 
         completed_user = await UserLoginRepository.get_user_with_profile(db, user_id)
 
@@ -113,7 +113,7 @@ async def refresh_token(response: Response, request: Request, db: AsyncSession =
         logger.exception("Token refresh failed")
         raise HTTPException(
             status_code=500,
-            detail="An error occurred while refreshing the token",
+            detail="Belirteç yenilenirken bir hata oluştu",
         )
 
 
@@ -139,7 +139,7 @@ async def logout(
 
     if not refresh_token:
         response.delete_cookie(key="refresh_token", **delete_cookie_options())
-        return {"message": "Logout successful"}
+        return {"message": "Çıkış başarılı"}
 
     user_logout_repository = UserLogoutRepository(db)
     try:
@@ -150,15 +150,15 @@ async def logout(
         # Perform server-side logout
         await user_logout_repository.logout(user_id)
 
-        return {"message": "Logout successful"}
+        return {"message": "Çıkış başarılı"}
 
     except (HTTPException, TypeError, ValueError):
         # Even if token verification fails, logout is idempotent.
-        return {"message": "Logout successful"}
+        return {"message": "Çıkış başarılı"}
 
     except Exception:
         logger.exception("Logout failed")
-        return {"message": "Logout successful"}
+        return {"message": "Çıkış başarılı"}
 
     finally:
         # Always clear the cookie regardless of server-side result.

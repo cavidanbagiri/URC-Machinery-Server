@@ -21,12 +21,12 @@ class TokenHandler:
             secret_key = os.getenv('JWT_SECRET_KEY')
             algorithm = os.getenv('JWT_ALGORITHM')
             if not secret_key or not algorithm:
-                raise HTTPException(status_code=500, detail="Server configuration error")
+                raise HTTPException(status_code=500, detail="Sunucu yapılandırma hatası")
             return jwt.encode(encode, secret_key, algorithm)
         except HTTPException:
             raise
         except Exception:
-            raise HTTPException(status_code=500, detail="Failed to create access token")
+            raise HTTPException(status_code=500, detail="Erişim belirteci oluşturulamadı")
 
     @staticmethod
     def generate_refresh_token(user_data: dict) -> str:  # SYNC method
@@ -39,37 +39,37 @@ class TokenHandler:
             secret_key = os.getenv('JWT_REFRESH_SECRET_KEY')
             algorithm = os.getenv('JWT_ALGORITHM')
             if not secret_key or not algorithm:
-                raise HTTPException(status_code=500, detail="Server configuration error")
+                raise HTTPException(status_code=500, detail="Sunucu yapılandırma hatası")
             return jwt.encode(encode, secret_key, algorithm)
         except HTTPException:
             raise
         except Exception:
-            raise HTTPException(status_code=500, detail="Failed to create refresh token")
+            raise HTTPException(status_code=500, detail="Yenileme belirteci oluşturulamadı")
 
     @staticmethod
     def verify_access_token(req: Request) -> dict:
         authorization = req.headers.get('Authorization')
         if not authorization:
-            raise HTTPException(status_code=401, detail='Authorization Error')
+            raise HTTPException(status_code=401, detail='Yetkilendirme hatası')
 
         scheme, separator, access_token = authorization.partition(' ')
         access_token = access_token.strip()
 
         if not separator or scheme.lower() != 'bearer' or not access_token:
-            raise HTTPException(status_code=401, detail='Authorization Error')
+            raise HTTPException(status_code=401, detail='Yetkilendirme hatası')
 
         secret_key = os.getenv('JWT_SECRET_KEY')
         algorithm = os.getenv('JWT_ALGORITHM')
         if not secret_key or not algorithm:
-            raise HTTPException(status_code=500, detail='Server configuration error')
+            raise HTTPException(status_code=500, detail='Sunucu yapılandırma hatası')
 
         try:
             payload = jwt.decode(access_token, secret_key, algorithms=[algorithm])
             return payload
         except ExpiredSignatureError:
-            raise HTTPException(status_code=401, detail='Access token expired')
+            raise HTTPException(status_code=401, detail='Erişim belirtecinin süresi doldu')
         except InvalidTokenError:
-            raise HTTPException(status_code=401, detail='Authorization Error')
+            raise HTTPException(status_code=401, detail='Yetkilendirme hatası')
 
     @staticmethod
     def verify_refresh_token(refresh_token: str) -> dict:
@@ -82,28 +82,28 @@ class TokenHandler:
         """
         try:
             if not refresh_token:
-                raise HTTPException(status_code=401, detail="Refresh token is required")
+                raise HTTPException(status_code=401, detail="Yenileme belirteci gerekli")
 
             secret_key = os.getenv('JWT_REFRESH_SECRET_KEY')
             algorithm = os.getenv('JWT_ALGORITHM')
 
             if not secret_key or not algorithm:
-                raise HTTPException(status_code=500, detail="Server configuration error")
+                raise HTTPException(status_code=500, detail="Sunucu yapılandırma hatası")
 
             # Decode and verify the token
             payload = jwt.decode(refresh_token, secret_key, algorithms=[algorithm])
 
             # Validate required fields
             if 'sub' not in payload:
-                raise HTTPException(status_code=401, detail="Invalid token: missing subject")
+                raise HTTPException(status_code=401, detail="Geçersiz belirteç: kullanıcı bilgisi eksik")
 
             return payload
 
         except HTTPException:
             raise
         except jwt.ExpiredSignatureError:
-            raise HTTPException(status_code=401, detail="Refresh token expired")
+            raise HTTPException(status_code=401, detail="Yenileme belirtecinin süresi doldu")
         except jwt.InvalidTokenError:
-            raise HTTPException(status_code=401, detail="Invalid refresh token")
+            raise HTTPException(status_code=401, detail="Yenileme belirteci geçersiz")
         except Exception:
-            raise HTTPException(status_code=500, detail="Token verification failed")
+            raise HTTPException(status_code=500, detail="Belirteç doğrulanamadı")
