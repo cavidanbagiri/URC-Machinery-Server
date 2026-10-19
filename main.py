@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 # Load server/.env before importing routers: database.setup reads env at import.
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
-from routers import auth_router, machines_router  # noqa: E402
+from routers import auth_router, machines_router, maintenance_router  # noqa: E402
 
 app = FastAPI()
 
@@ -39,6 +39,7 @@ app.add_middleware(
 
 app.include_router(router = auth_router.router, prefix="/api/auth", tags=["User"])
 app.include_router(router = machines_router.router, prefix="/api/machines", tags=["Machines"])
+app.include_router(router = maintenance_router.router, prefix="/api/maintenance", tags=["Maintenance"])
 
 
 @app.get("/api/health", tags=["Health"])

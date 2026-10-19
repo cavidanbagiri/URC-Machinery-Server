@@ -157,6 +157,22 @@ class AllMachineModel(Base):
     # Relationship to User (assuming UserModel is defined in the same file or imported)
     creator = relationship("UserModel")
 
+    # Periodic maintenance (models/maintenance_model.py)
+    maintenance_setting = relationship(
+        "MachineMaintenanceSettingModel",
+        back_populates="machine",
+        uselist=False,
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    maintenance_records = relationship(
+        "MaintenanceRecordModel",
+        back_populates="machine",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="MaintenanceRecordModel.record_date.desc()",
+    )
+
     def __str__(self):
         return f"{self.identification_no} - {self.vin_no}"
 
@@ -176,3 +192,12 @@ class CarStatusModel(Base):
 
     def __str__(self):
         return f"{self.name}"
+
+
+# Register maintenance models whenever the machine models are imported. The
+# relationship targets above are strings, so SQLAlchemy needs these classes in
+# the mapper registry before the first query.
+from models.maintenance_model import (  # noqa: E402,F401
+    MachineMaintenanceSettingModel,
+    MaintenanceRecordModel,
+)
