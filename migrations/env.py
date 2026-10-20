@@ -20,6 +20,7 @@ load_dotenv(SERVER_DIR / ".env")
 from db.base import Base  # noqa: E402
 import models.machines_model  # noqa: E402,F401
 import models.maintenance_model  # noqa: E402,F401
+import models.repair_model  # noqa: E402,F401
 import models.user_model  # noqa: E402,F401
 
 # this is the Alembic Config object, which provides

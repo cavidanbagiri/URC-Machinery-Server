@@ -15,7 +15,8 @@ from repositories.machines_repository import (
     CarMarkRepository,
     CarModelRepository,
     CompanyRepository,
-    CarStatusRepository
+    CarStatusRepository,
+    RepairTypeRepository,
 )
 from schemas.machines_schemas import (
     CreateTerritorySchema, FetchTerritorySchema,
@@ -26,7 +27,7 @@ from schemas.machines_schemas import (
     CreateCompanySchema, FetchCompanySchema,
     CreateCarStatusSchema, UpdateCarStatusSchema,
     FetchCarStatusSchema, StatusStatisticsSchema, PivotTableSchema,
-
+    CreateRepairTypeSchema, FetchRepairTypeSchema,
 )
 
 # Every machine/lookup endpoint requires a valid access token. Write endpoints
@@ -683,4 +684,82 @@ async def get_pivot_statistics(
         raise HTTPException(
             status_code=500,
             detail=f"Pivot istatistikleri getirilemedi: {e}",
+        )
+
+
+# =========================================================
+# REPAIR TYPE (Tamir Tipi)
+# =========================================================
+
+@router.post(
+    "/create_repair_type",
+    status_code=201,
+    response_model=FetchRepairTypeSchema,
+    dependencies=[Depends(require_write_permission)],
+)
+async def create_repair_type(
+    data: CreateRepairTypeSchema,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    try:
+        return await RepairTypeRepository(db).create(data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Tamir tipi oluşturulamadı: {e}"
+        )
+
+
+@router.get(
+    "/fetch_repair_types",
+    response_model=list[FetchRepairTypeSchema],
+)
+async def fetch_repair_types(db: Annotated[AsyncSession, Depends(get_db)]):
+    try:
+        return await RepairTypeRepository(db).fetch_all()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Tamir tipleri getirilemedi: {e}"
+        )
+
+
+@router.put(
+    "/update_repair_type/{obj_id}",
+    response_model=FetchRepairTypeSchema,
+    dependencies=[Depends(require_write_permission)],
+)
+async def update_repair_type(
+    obj_id: int,
+    data: CreateRepairTypeSchema,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    try:
+        return await RepairTypeRepository(db).update(obj_id, data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Tamir tipi güncellenemedi: {e}"
+        )
+
+
+@router.delete(
+    "/delete_repair_type/{obj_id}",
+    status_code=204,
+    dependencies=[Depends(require_write_permission)],
+)
+async def delete_repair_type(
+    obj_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    try:
+        await RepairTypeRepository(db).delete(obj_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Tamir tipi silinemedi: {e}"
         )

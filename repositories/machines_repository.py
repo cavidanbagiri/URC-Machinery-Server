@@ -14,6 +14,7 @@ from models.machines_model import (
     CompanyModel,
     CarStatusModel
 )
+from models.repair_model import RepairRecordModel, RepairTypeModel
 from schemas.machines_schemas import (
     CreateTerritorySchema,
     CreateTypeTransportSchema,
@@ -21,6 +22,7 @@ from schemas.machines_schemas import (
     CreateCarMarkSchema,
     CreateCarModelSchema,
     CreateCompanySchema, CreateCarStatusSchema, UpdateCarStatusSchema,
+    CreateRepairTypeSchema,
 )
 
 
@@ -170,6 +172,28 @@ class CompanyRepository(_BaseLookupRepository):
 
     async def create(self, data: CreateCompanySchema):
         return await super().create(data)
+
+
+class RepairTypeRepository(_BaseLookupRepository):
+    model = RepairTypeModel
+    label = "Tamir Tipi"
+
+    async def create(self, data: CreateRepairTypeSchema):
+        return await super().create(data)
+
+    async def delete(self, obj_id: int) -> None:
+        obj = await self.fetch_by_id(obj_id)
+        used = await self.db.execute(
+            select(RepairRecordModel.id)
+            .where(RepairRecordModel.repair_type_id == obj_id)
+            .limit(1)
+        )
+        if used.scalar_one_or_none() is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="Bu tamir tipi kayıtlarda kullanıldığı için silinemez",
+            )
+        await super().delete(obj.id)
 
 
 # repositories/machines_repository.py (əlavə)
@@ -382,6 +406,40 @@ class AllMachineRepository:
 
         # FK-ları yoxla
         await self._validate_all_fks(data)
+
+        # An open repair owns the machine status. Changing it manually would
+        # leave the repair record out of sync with the machine, so require the
+        # repair to be closed/cancelled first.
+        if (
+            "status_id" in data.model_fields_set
+            and data.status_id is not None
+            and data.status_id != machine.status_id
+        ):
+            active_repair = await self.db.execute(
+                select(RepairRecordModel.id)
+                .where(
+                    RepairRecordModel.machine_id == machine_id,
+                    RepairRecordModel.status == "tamirde",
+                )
+                .limit(1)
+            )
+            if active_repair.scalar_one_or_none() is not None:
+                tamirde = await self.db.execute(
+                    select(CarStatusModel.id)
+                    .where(
+                        func.lower(CarStatusModel.name) == "tamirde"
+                    )
+                    .limit(1)
+                )
+                if data.status_id != tamirde.scalar_one_or_none():
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            "Makinenin açık tamir kaydı var. Durumu değiştirmek "
+                            "için önce Tamir sayfasından tamamlayın veya iptal "
+                            "edin."
+                        ),
+                    )
 
         # VIN / plate unikal yoxla (özündən başqa)
         await self._ensure_unique_fields(

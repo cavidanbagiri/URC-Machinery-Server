@@ -221,3 +221,18 @@ class PivotTableSchema(BaseModel):
     rows: list[PivotRowSchema]
     grand_totals: dict[str, int]  # { "1": 26, "2": 35, ... }
     grand_total: int
+
+
+# =========================================================
+# REPAIR TYPE (Settings lookup)
+# =========================================================
+
+class CreateRepairTypeSchema(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+
+
+class FetchRepairTypeSchema(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str

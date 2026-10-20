@@ -173,6 +173,15 @@ class AllMachineModel(Base):
         order_by="MaintenanceRecordModel.record_date.desc()",
     )
 
+    # Tamir records (models/repair_model.py)
+    repair_records = relationship(
+        "RepairRecordModel",
+        back_populates="machine",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="RepairRecordModel.entry_date.desc()",
+    )
+
     def __str__(self):
         return f"{self.identification_no} - {self.vin_no}"
 
@@ -200,4 +209,9 @@ class CarStatusModel(Base):
 from models.maintenance_model import (  # noqa: E402,F401
     MachineMaintenanceSettingModel,
     MaintenanceRecordModel,
+)
+from models.repair_model import (  # noqa: E402,F401
+    RepairLogModel,
+    RepairRecordModel,
+    RepairTypeModel,
 )
