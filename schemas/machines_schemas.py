@@ -2,7 +2,9 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from services.storage_service import build_photo_url
 
 
 # =========================================================
@@ -128,6 +130,29 @@ class UpdateAllMachineSchema(CreateAllMachineSchema):
     pass
 
 
+class FetchMachinePhotoSchema(BaseModel):
+    """A machine photo; ``url`` is derived from ``object_key`` (never stored)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    machine_id: int
+    object_key: str
+    url: str = ""
+    original_filename: Optional[str] = None
+    content_type: Optional[str] = None
+    size_bytes: Optional[int] = None
+    is_primary: bool = False
+    uploaded_by_id: Optional[int] = None
+    created_at: Optional[datetime] = None
+
+    @model_validator(mode="after")
+    def _fill_url(self):
+        if not self.url and self.object_key:
+            self.url = build_photo_url(self.object_key)
+        return self
+
+
 class FetchAllMachineSchema(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -152,6 +177,8 @@ class FetchAllMachineSchema(BaseModel):
     created_by_id: Optional[int]
     created_at: Optional[datetime]
     status_id: int
+
+    photos: list[FetchMachinePhotoSchema] = Field(default_factory=list)
 
 
 class PaginatedAllMachineSchema(BaseModel):

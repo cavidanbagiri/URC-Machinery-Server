@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from fastapi import HTTPException
 
 from models.machines_model import (
@@ -24,6 +25,7 @@ from schemas.machines_schemas import (
     CreateCompanySchema, CreateCarStatusSchema, UpdateCarStatusSchema,
     CreateRepairTypeSchema,
 )
+from services.storage_service import delete_objects
 
 
 # =========================================================
@@ -296,7 +298,8 @@ class AllMachineRepository:
             await self.db.rollback()
             raise
 
-        return machine
+        # Re-read so ``photos`` is eagerly loaded for the response model.
+        return await self.fetch_by_id(machine.id)
 
     # ---------- FETCH (PAGINATION İLƏ) ----------
     async def fetch_paginated(
@@ -325,7 +328,12 @@ class AllMachineRepository:
             offset = 0
 
         # Base queries
-        query = select(AllMachineModel)
+        # ``photos`` is eagerly loaded: the response serializer runs outside the
+        # session's greenlet context, where lazy loading would raise
+        # MissingGreenlet.
+        query = select(AllMachineModel).options(
+            selectinload(AllMachineModel.photos)
+        )
         count_query = select(func.count(AllMachineModel.id))  # ← BURADA
 
         # Filtrlər
@@ -389,7 +397,9 @@ class AllMachineRepository:
 
     async def fetch_by_id(self, machine_id: int) -> AllMachineModel:
         result = await self.db.execute(
-            select(AllMachineModel).where(AllMachineModel.id == machine_id)
+            select(AllMachineModel)
+            .options(selectinload(AllMachineModel.photos))
+            .where(AllMachineModel.id == machine_id)
         )
         machine = result.scalar_one_or_none()
         if machine is None:
@@ -466,11 +476,15 @@ class AllMachineRepository:
             await self.db.rollback()
             raise
 
-        return machine
+        # Re-read so ``photos`` is eagerly loaded for the response model.
+        return await self.fetch_by_id(machine.id)
 
     # ---------- DELETE ----------
     async def delete(self, machine_id: int) -> None:
         machine = await self.fetch_by_id(machine_id)
+
+        # Collect the S3 keys first: once the machine is gone the rows are lost.
+        object_keys = [photo.object_key for photo in machine.photos]
 
         try:
             await self.db.delete(machine)
@@ -478,6 +492,10 @@ class AllMachineRepository:
         except Exception:
             await self.db.rollback()
             raise
+
+        # Best effort: the DB row is already deleted, so a storage failure must
+        # not turn the request into an error (orphan objects are harmless).
+        await delete_objects(object_keys)
 
 
     async def get_status_statistics(self) -> dict:

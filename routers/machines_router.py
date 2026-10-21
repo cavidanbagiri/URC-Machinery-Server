@@ -1,13 +1,14 @@
 # routers/machines_router.py
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.setup import get_db
 from dependencies.auth import get_current_user
 from dependencies.permissions import require_write_permission
 from models.user_model import UserModel
+from repositories.machine_photo_repository import MachinePhotoRepository
 from repositories.machines_repository import (
     TerritoryRepository,
     TypeTransportRepository,
@@ -28,6 +29,17 @@ from schemas.machines_schemas import (
     CreateCarStatusSchema, UpdateCarStatusSchema,
     FetchCarStatusSchema, StatusStatisticsSchema, PivotTableSchema,
     CreateRepairTypeSchema, FetchRepairTypeSchema,
+    FetchMachinePhotoSchema,
+)
+from services.storage_service import (
+    StorageError,
+    StorageNotConfigured,
+    build_object_key,
+    delete_objects,
+    max_upload_bytes,
+    resolve_content_type,
+    upload_image,
+    validate_size,
 )
 
 # Every machine/lookup endpoint requires a valid access token. Write endpoints
@@ -576,6 +588,131 @@ async def delete_machine(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Makine silinemedi: {e}")
+
+
+# =========================================================
+# MACHINE PHOTOS (Cloud.ru S3 public-read bucket)
+# =========================================================
+
+@router.post(
+    "/upload_machine_photo/{machine_id}",
+    status_code=201,
+    response_model=FetchMachinePhotoSchema,
+)
+async def upload_machine_photo(
+    machine_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[UserModel, Depends(require_write_permission)],
+    file: Annotated[UploadFile, File(description="JPEG, PNG veya WEBP")],
+    is_primary: Annotated[bool, Form()] = False,
+):
+    repo = MachinePhotoRepository(db)
+
+    try:
+        # Fail with 404 before a single byte reaches the bucket.
+        await repo.fetch_machine_photos(machine_id)
+
+        try:
+            content_type = resolve_content_type(file.filename, file.content_type)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+        try:
+            # Read one byte past the limit so oversized files are detected
+            # without buffering the whole upload in memory.
+            data = await file.read(max_upload_bytes() + 1)
+        finally:
+            await file.close()
+
+        try:
+            validate_size(len(data))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+        object_key = build_object_key(machine_id, content_type)
+
+        try:
+            await upload_image(object_key, data, content_type)
+        except StorageNotConfigured as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+        except StorageError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+        try:
+            return await repo.create(
+                machine_id,
+                object_key=object_key,
+                original_filename=(file.filename or "")[:255] or None,
+                content_type=content_type,
+                size_bytes=len(data),
+                uploaded_by_id=current_user.id,
+                is_primary=is_primary,
+            )
+        except Exception:
+            # Compensation: never leave an object without a database row.
+            await delete_objects([object_key])
+            raise
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Fotoğraf yüklenemedi: {e}")
+
+
+@router.get(
+    "/fetch_machine_photos/{machine_id}",
+    response_model=list[FetchMachinePhotoSchema],
+)
+async def fetch_machine_photos(
+    machine_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    try:
+        return await MachinePhotoRepository(db).fetch_machine_photos(machine_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Fotoğraflar getirilemedi: {e}"
+        )
+
+
+@router.put(
+    "/set_primary_machine_photo/{photo_id}",
+    response_model=FetchMachinePhotoSchema,
+    dependencies=[Depends(require_write_permission)],
+)
+async def set_primary_machine_photo(
+    photo_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    try:
+        return await MachinePhotoRepository(db).set_primary(photo_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Ana fotoğraf güncellenemedi: {e}"
+        )
+
+
+@router.delete(
+    "/delete_machine_photo/{photo_id}",
+    status_code=204,
+    dependencies=[Depends(require_write_permission)],
+)
+async def delete_machine_photo(
+    photo_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    try:
+        object_key = await MachinePhotoRepository(db).delete(photo_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Fotoğraf silinemedi: {e}")
+
+    # Best effort: the row is gone, so storage hiccups must not fail the call.
+    await delete_objects([object_key])
 
 
 
