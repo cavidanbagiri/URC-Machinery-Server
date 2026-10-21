@@ -47,6 +47,15 @@ DEFAULT_MAX_UPLOAD_MB = 10
 DEFAULT_PRESIGN_EXPIRES_SECONDS = 86_400
 MAX_PRESIGN_EXPIRES_SECONDS = 604_800  # SigV4 hard limit: 7 days
 
+#: Environment variables without which photo storage cannot be used.
+#: ``S3_REGION`` has a default and ``S3_PUBLIC_BASE_URL`` is optional.
+REQUIRED_SETTINGS = (
+    "S3_ENDPOINT",
+    "S3_BUCKET",
+    "S3_ACCESS_KEY_ID",
+    "S3_SECRET_ACCESS_KEY",
+)
+
 
 class StorageNotConfigured(RuntimeError):
     """Required ``S3_*`` environment variables are missing."""
@@ -87,18 +96,20 @@ def addressing_style() -> str:
     return style if style in {"path", "virtual", "auto"} else "path"
 
 
+def missing_configuration() -> list[str]:
+    """Names of the required ``S3_*`` variables that are absent or blank.
+
+    Returning names (never values) keeps the startup log and ``/api/health``
+    safe to expose: they say *what* an operator forgot to set on the host.
+    """
+
+    return [name for name in REQUIRED_SETTINGS if not _env(name)]
+
+
 def is_configured() -> bool:
     """True when every credential needed to talk to the bucket is present."""
 
-    return all(
-        (
-            endpoint_url(),
-            region_name(),
-            bucket_name(),
-            _env("S3_ACCESS_KEY_ID"),
-            _env("S3_SECRET_ACCESS_KEY"),
-        )
-    )
+    return not missing_configuration()
 
 
 def max_upload_mb() -> int:
@@ -227,9 +238,12 @@ def _build_client(
 
 
 def _client():
-    if not is_configured():
+    missing = missing_configuration()
+    if missing:
         raise StorageNotConfigured(
-            "Fotoğraf depolama yapılandırılmamış (S3_* ortam değişkenleri eksik)"
+            "Fotoğraf depolama yapılandırılmamış (eksik ortam değişkenleri: "
+            + ", ".join(missing)
+            + ")"
         )
 
     return _build_client(

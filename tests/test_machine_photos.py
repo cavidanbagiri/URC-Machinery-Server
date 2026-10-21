@@ -18,10 +18,13 @@ from schemas.machines_schemas import (
 )
 from services.storage_service import (
     ALLOWED_IMAGE_TYPES,
+    REQUIRED_SETTINGS,
     build_object_key,
     build_photo_url,
+    is_configured,
     max_upload_bytes,
     max_upload_mb,
+    missing_configuration,
     resolve_content_type,
     validate_size,
 )
@@ -147,6 +150,45 @@ class PhotoUrlTests(unittest.TestCase):
     def test_returns_empty_when_not_configured(self):
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(build_photo_url("machines/5/abc.png"), "")
+
+
+class ConfigurationTests(unittest.TestCase):
+    """Hosts without S3_* env vars must fail loudly and name what is missing."""
+
+    def test_all_required_settings_reported(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(missing_configuration(), list(REQUIRED_SETTINGS))
+            self.assertFalse(is_configured())
+
+    def test_blank_values_count_as_missing(self):
+        env = dict(PUBLIC_ENV, S3_BUCKET="   ", S3_SECRET_ACCESS_KEY="")
+        with patch.dict(os.environ, env):
+            self.assertEqual(
+                missing_configuration(), ["S3_BUCKET", "S3_SECRET_ACCESS_KEY"]
+            )
+
+    def test_partial_configuration_is_not_enough(self):
+        env = {
+            "S3_ENDPOINT": "https://s3.cloud.ru",
+            "S3_BUCKET": "urc-machinery-images",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            self.assertEqual(
+                missing_configuration(),
+                ["S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"],
+            )
+
+    def test_public_base_is_optional(self):
+        env = {k: v for k, v in PUBLIC_ENV.items() if k != "S3_PUBLIC_BASE_URL"}
+        with patch.dict(os.environ, env):
+            self.assertEqual(missing_configuration(), [])
+            self.assertTrue(is_configured())
+
+    def test_region_has_a_default_and_is_not_required(self):
+        env = {k: v for k, v in PUBLIC_ENV.items() if k != "S3_REGION"}
+        with patch.dict(os.environ, env):
+            self.assertNotIn("S3_REGION", missing_configuration())
+            self.assertTrue(is_configured())
 
 
 def make_photo(**overrides):

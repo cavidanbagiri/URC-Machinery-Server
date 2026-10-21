@@ -1,7 +1,9 @@
 
 
 
+import logging
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -13,8 +15,32 @@ from fastapi.middleware.cors import CORSMiddleware
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
 from routers import auth_router, machines_router, maintenance_router, repair_router  # noqa: E402
+from services.storage_service import missing_configuration  # noqa: E402
 
-app = FastAPI()
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Surface missing photo-storage configuration in the host's logs.
+
+    Deployed services (Render, ...) do not read ``server/.env``; the variables
+    must be created in the service environment. Without them uploads return 503
+    and photo URLs are empty, so log the exact names once at startup.
+    """
+
+    missing = missing_configuration()
+    if missing:
+        logger.warning(
+            "Machine photo storage is disabled, missing environment variables: %s",
+            ", ".join(missing),
+        )
+    else:
+        logger.info("Machine photo storage is configured")
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 
 default_origins = [
@@ -45,7 +71,14 @@ app.include_router(router = repair_router.router, prefix="/api/repair", tags=["R
 
 @app.get("/api/health", tags=["Health"])
 async def health():
-    return {"status": "ok"}
+    missing = missing_configuration()
+    return {
+        "status": "ok",
+        # Hosts without the S3_* environment variables can still serve the API,
+        # but photo upload returns 503 and photo URLs are empty.
+        "photo_storage": "disabled" if missing else "configured",
+        "missing_settings": missing,
+    }
 
 
 
