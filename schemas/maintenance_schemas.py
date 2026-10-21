@@ -18,6 +18,11 @@ MaintenanceStatusCode = Literal[
     "pasif",
 ]
 
+# List sorting. ``remaining`` sorts by the remaining counter value; rows
+# without a computable value always stay at the end.
+MaintenanceSortField = Literal["remaining"]
+MaintenanceSortOrder = Literal["asc", "desc"]
+
 
 # =========================================================
 # SETTING / PLAN

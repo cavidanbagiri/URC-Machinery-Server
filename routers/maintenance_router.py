@@ -15,6 +15,8 @@ from schemas.maintenance_schemas import (
     MaintenanceHistoryItemSchema,
     MaintenanceReadingCreateSchema,
     MaintenanceSettingUpdateSchema,
+    MaintenanceSortField,
+    MaintenanceSortOrder,
     MaintenanceStatusCode,
     MaintenanceSummarySchema,
     PaginatedMaintenanceSchema,
@@ -60,6 +62,8 @@ async def fetch_maintenance(
     territory_id: Optional[int] = Query(None),
     type_id: Optional[int] = Query(None),
     company_id: Optional[int] = Query(None),
+    sort_by: Optional[MaintenanceSortField] = Query(None),
+    sort_order: Optional[MaintenanceSortOrder] = Query(None),
 ):
     try:
         return await MaintenanceRepository(db).fetch_paginated(
@@ -74,6 +78,8 @@ async def fetch_maintenance(
             territory_id=territory_id,
             type_id=type_id,
             company_id=company_id,
+            sort_by=sort_by,
+            sort_order=sort_order,
         )
     except HTTPException:
         raise

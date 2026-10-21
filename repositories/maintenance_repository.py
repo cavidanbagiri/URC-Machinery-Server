@@ -135,6 +135,60 @@ def compute_maintenance_status(
     }
 
 
+def _row_status_priority(item: dict[str, Any]) -> int:
+    status = item.get("status") or {}
+    return STATUS_PRIORITY.get(status.get("code"), len(STATUS_ORDER))
+
+
+def _row_identity(item: dict[str, Any]) -> str:
+    return str(item.get("identification_no") or "").upper()
+
+
+def sort_maintenance_items(
+    items: list[dict[str, Any]],
+    *,
+    sort_by: Optional[str] = None,
+    sort_order: Optional[str] = None,
+) -> list[dict[str, Any]]:
+    """Sort maintenance rows in place and return the same list.
+
+    The default order keeps the most urgent status groups on top. With
+    ``sort_by="remaining"`` the rows are ordered by their remaining counter
+    value instead. Rows without a computable remaining value (no plan, missing
+    counters...) always stay at the end so they never push real work down the
+    list — this holds for both directions.
+    """
+
+    if sort_by != "remaining":
+        items.sort(
+            key=lambda item: (
+                _row_status_priority(item),
+                (
+                    item["remaining"]
+                    if item["remaining"] is not None
+                    else float("inf")
+                ),
+                _row_identity(item),
+            )
+        )
+        return items
+
+    planned = [item for item in items if item["remaining"] is not None]
+    unplanned = [item for item in items if item["remaining"] is None]
+
+    def tie_breaker(item: dict[str, Any]) -> tuple[int, str]:
+        return (_row_status_priority(item), _row_identity(item))
+
+    # Python's sort is stable: the first pass orders ties, the second pass
+    # orders by the remaining value without disturbing the tie-breakers.
+    planned.sort(key=tie_breaker)
+    planned.sort(key=lambda item: item["remaining"], reverse=sort_order == "desc")
+    unplanned.sort(key=tie_breaker)
+
+    items[:] = [*planned, *unplanned]
+    return items
+
+
 class MaintenanceRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -240,6 +294,8 @@ class MaintenanceRepository:
         territory_id: Optional[int] = None,
         type_id: Optional[int] = None,
         company_id: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> list[dict[str, Any]]:
         query = self._base_select()
 
@@ -288,14 +344,7 @@ class MaintenanceRepository:
         if status:
             items = [item for item in items if item["status"]["code"] == status]
 
-        items.sort(
-            key=lambda item: (
-                STATUS_PRIORITY.get(item["status"]["code"], 99),
-                item["remaining"] if item["remaining"] is not None else float("inf"),
-                (item["identification_no"] or "").upper(),
-            )
-        )
-        return items
+        return sort_maintenance_items(items, sort_by=sort_by, sort_order=sort_order)
 
     async def _get_machine(self, machine_id: int) -> AllMachineModel:
         machine = await self.db.get(AllMachineModel, machine_id)
@@ -348,6 +397,8 @@ class MaintenanceRepository:
         territory_id: Optional[int] = None,
         type_id: Optional[int] = None,
         company_id: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> dict[str, Any]:
         if limit < 1:
             limit = 20
@@ -366,6 +417,8 @@ class MaintenanceRepository:
             territory_id=territory_id,
             type_id=type_id,
             company_id=company_id,
+            sort_by=sort_by,
+            sort_order=sort_order,
         )
         total = len(items)
         return {

@@ -16,6 +16,7 @@ from repositories.maintenance_repository import (
     STATUS_DEFINITIONS,
     STATUS_ORDER,
     compute_maintenance_status,
+    sort_maintenance_items,
 )
 from schemas.maintenance_schemas import (
     MaintenanceCompleteSchema,
@@ -147,6 +148,95 @@ class MaintenanceStatusTests(unittest.TestCase):
             self.assertEqual(definition["code"], code)
             self.assertTrue(definition["name"])
             self.assertTrue(definition["color"])
+
+
+def make_sort_item(
+    machine_id: int,
+    remaining,
+    status_code: str = "uygun",
+    identification_no: str | None = None,
+) -> dict:
+    """Build the minimal item shape that ``sort_maintenance_items`` reads."""
+
+    return {
+        "machine_id": machine_id,
+        "identification_no": identification_no or f"M-{machine_id:03d}",
+        "remaining": remaining,
+        "status": {"code": status_code},
+    }
+
+
+class MaintenanceSortTests(unittest.TestCase):
+    def test_default_order_keeps_status_priority(self):
+        items = [
+            make_sort_item(1, 5_000.0, "uygun"),
+            make_sort_item(2, None, "plan_yok"),
+            make_sort_item(3, -500.0, "gecikmis"),
+            make_sort_item(4, 200.0, "yaklasiyor"),
+        ]
+
+        sorted_items = sort_maintenance_items(items)
+
+        self.assertEqual(
+            [item["machine_id"] for item in sorted_items],
+            # STATUS_ORDER: gecikmis, yaklasiyor, plan_yok, uygun
+            [3, 4, 2, 1],
+        )
+
+    def test_remaining_asc_puts_most_overdue_first(self):
+        items = [
+            make_sort_item(1, 5_000.0),
+            make_sort_item(2, None, "plan_yok"),
+            make_sort_item(3, -500.0, "gecikmis"),
+            make_sort_item(4, 0.0, "gecikmis"),
+        ]
+
+        sorted_items = sort_maintenance_items(
+            items, sort_by="remaining", sort_order="asc"
+        )
+
+        self.assertEqual(
+            [item["remaining"] for item in sorted_items],
+            [-500.0, 0.0, 5_000.0, None],
+        )
+
+    def test_remaining_desc_keeps_rows_without_plan_last(self):
+        items = [
+            make_sort_item(1, 5_000.0),
+            make_sort_item(2, None, "plan_yok"),
+            make_sort_item(3, -500.0, "gecikmis"),
+            make_sort_item(4, 0.0, "gecikmis"),
+        ]
+
+        sorted_items = sort_maintenance_items(
+            items, sort_by="remaining", sort_order="desc"
+        )
+
+        self.assertEqual(
+            [item["remaining"] for item in sorted_items],
+            [5_000.0, 0.0, -500.0, None],
+        )
+        self.assertEqual(sorted_items[-1]["machine_id"], 2)
+
+    def test_remaining_sort_uses_machine_no_as_tie_breaker(self):
+        items = [
+            make_sort_item(1, 1_000.0, identification_no="M-200"),
+            make_sort_item(2, 1_000.0, identification_no="M-100"),
+        ]
+
+        ascending = sort_maintenance_items(
+            list(items), sort_by="remaining", sort_order="asc"
+        )
+        descending = sort_maintenance_items(
+            list(items), sort_by="remaining", sort_order="desc"
+        )
+
+        self.assertEqual(
+            [item["identification_no"] for item in ascending], ["M-100", "M-200"]
+        )
+        self.assertEqual(
+            [item["identification_no"] for item in descending], ["M-100", "M-200"]
+        )
 
 
 class MaintenanceSchemaTests(unittest.TestCase):
