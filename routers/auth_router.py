@@ -57,7 +57,7 @@ async def register(response: Response, register_data: auth_schemas.UserRegisterS
 
 @router.post('/login', status_code=200)
 async def login(response: Response, login_data: UserLoginSchema, db_session: Annotated[AsyncSession,  Depends(get_db)]):
-
+    print(login_data)
     repository = UserLoginRepository(db_session)
 
     try:
@@ -77,9 +77,11 @@ async def login(response: Response, login_data: UserLoginSchema, db_session: Ann
             'access_token': data.get('access_token')
         }
 
-    except HTTPException:
+    except HTTPException as hex:
+        print("err: {}".format(hex))
         raise
-    except Exception:
+    except Exception as ex:
+        print("exc err {}".format(ex)g)
         logger.exception("Login failed")
         raise HTTPException(500, 'Sunucu hatası')
 
