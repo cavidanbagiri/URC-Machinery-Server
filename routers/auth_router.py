@@ -81,7 +81,7 @@ async def login(response: Response, login_data: UserLoginSchema, db_session: Ann
         print("err: {}".format(hex))
         raise
     except Exception as ex:
-        print("exc err {}".format(ex)g)
+        print("exc err {}".format(ex))
         logger.exception("Login failed")
         raise HTTPException(500, 'Sunucu hatası')
 

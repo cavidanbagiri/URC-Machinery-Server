@@ -213,7 +213,8 @@ class UserLoginRepository:
             }
         except HTTPException:
             raise
-        except Exception:
+        except Exception as ex:
+            print("ex -> {}".format(ex))
             raise HTTPException(status_code=500, detail="Giriş başarısız oldu")
 
     @staticmethod
