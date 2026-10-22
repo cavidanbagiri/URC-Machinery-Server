@@ -46,7 +46,9 @@ app = FastAPI(lifespan=lifespan)
 default_origins = [
     "http://localhost:5173",
     "https://urc-machinery-web.onrender.com",
-    "https://urc-machinery.s3-website.cloud.ru"
+    "https://urc-machinery.s3-website.cloud.ru",
+    "https://ustaymakine.com",
+    "https://www.ustaymakine.com"
 ]
 configured_origins = [
     origin.strip()
