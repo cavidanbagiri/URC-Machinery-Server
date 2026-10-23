@@ -211,10 +211,11 @@ class UserLoginRepository:
                 'access_token': access_token,
                 'refresh_token': refresh_token
             }
-        except HTTPException:
-            raise
+        except HTTPException as ex:
+            raise ex
         except Exception as ex:
-            print("ex -> {}".format(ex))
+            # print("ex -> {}".format(ex))
+            print(ex)
             raise HTTPException(status_code=500, detail="Giriş başarısız oldu")
 
     @staticmethod
