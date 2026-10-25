@@ -48,7 +48,9 @@ default_origins = [
     "https://urc-machinery-web.onrender.com",
     "https://urc-machinery.s3-website.cloud.ru",
     "https://ustaymakine.com",
-    "https://www.ustaymakine.com"
+    "https://www.ustaymakine.com",
+    "https://ustaymakine.store",
+    "https://www.ustaymakine.store"
 ]
 configured_origins = [
     origin.strip()
