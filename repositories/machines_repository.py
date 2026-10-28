@@ -379,12 +379,16 @@ class AllMachineRepository:
         # Items
         query = (
             query
-            .order_by(AllMachineModel.id.desc())
+            .order_by(AllMachineModel.identification_no.asc())
             .offset(offset)
             .limit(limit)
         )
         items_result = await self.db.execute(query)
         items = list(items_result.scalars().all())
+
+        # print(items)
+
+
 
         return {
             "total": total,
