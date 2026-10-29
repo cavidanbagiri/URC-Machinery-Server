@@ -2,7 +2,7 @@
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Response, HTTPException, Request, UploadFile
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +14,17 @@ from dependencies.auth import get_current_user
 from models.user_model import UserModel
 
 from repositories.auth_repository import UserRegisterRepository, UserLoginRepository, UserLogoutRepository
+from repositories.user_avatar_repository import UserAvatarRepository
+from services.storage_service import (
+    StorageError,
+    StorageNotConfigured,
+    build_avatar_key,
+    delete_objects,
+    max_upload_bytes,
+    resolve_content_type,
+    upload_image,
+    validate_size,
+)
 
 from schemas import auth_schemas
 from schemas.auth_schemas import UserLoginSchema
@@ -129,6 +140,65 @@ async def me(
     db: AsyncSession = Depends(get_db),
 ):
     """Return the authenticated user's public profile."""
+    return await UserLoginRepository.get_user_with_profile(db, current_user.id)
+
+
+@router.post('/me/avatar', status_code=200)
+async def upload_avatar(
+    current_user: Annotated[UserModel, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    file: Annotated[UploadFile, File(description="JPEG, PNG veya WEBP")],
+):
+    """Replace the signed-in user's profile photo and return the fresh profile.
+
+    Self-service: every authenticated user may change their own photo, no
+    write permission is required. The previous object is deleted best effort
+    once the database points at the new one.
+    """
+
+    try:
+        content_type = resolve_content_type(file.filename, file.content_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    try:
+        # Read one byte past the limit so oversized files are rejected without
+        # buffering the whole upload in memory.
+        data = await file.read(max_upload_bytes() + 1)
+    finally:
+        await file.close()
+
+    try:
+        validate_size(len(data))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    object_key = build_avatar_key(current_user.id, content_type)
+
+    try:
+        await upload_image(object_key, data, content_type)
+    except StorageNotConfigured as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except StorageError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    try:
+        previous_url = await UserAvatarRepository(db).replace(
+            current_user.id, object_key
+        )
+    except HTTPException:
+        # Compensation: never leave an object without a database row.
+        await delete_objects([object_key])
+        raise
+    except Exception:
+        await delete_objects([object_key])
+        logger.exception("Saving the avatar failed")
+        raise HTTPException(status_code=500, detail="Fotoğraf kaydedilemedi")
+
+    # External URLs (legacy rows) are not ours to delete; object keys are.
+    if previous_url and not previous_url.startswith(("http://", "https://", "data:")):
+        await delete_objects([previous_url])
+
     return await UserLoginRepository.get_user_with_profile(db, current_user.id)
 
 

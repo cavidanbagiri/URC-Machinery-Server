@@ -54,6 +54,10 @@ class UserModel(Base):
 
     password = Column(String(255), nullable=False)
 
+    # Job title shown on the dashboard header (e.g. "Bakım Şefi").
+    # Nullable: existing accounts keep working until an admin fills it in.
+    position = Column(String(100), nullable=True)
+
     image_id = Column(
         Integer,
         ForeignKey("images.id"),

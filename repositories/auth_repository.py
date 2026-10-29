@@ -14,7 +14,41 @@ from auth.token_handler import TokenHandler
 from core.permissions import DEFAULT_REGISTRATION_STATUS_ID
 from models.user_model import UserModel, TokenModel, StatusModel
 from schemas.auth_schemas import UserLoginSchema
+from services.storage_service import resolve_image_url
 from utils.hash_password import PasswordHash
+
+
+def user_image_url(user: UserModel) -> str:
+    """Resolve ``users.image_id -> images.url`` into a browser-usable URL.
+
+    The ``image`` relationship must be eager loaded (``selectinload``): async
+    sessions cannot lazy load, so a missing option raises instead of returning
+    ``None``.
+    """
+
+    image = user.image
+    return resolve_image_url(image.url if image else None)
+
+
+def serialize_user(
+    user: UserModel,
+    status_text: str | None,
+    image_url: str = "",
+) -> Dict[str, Any]:
+    """User payload shared by register, login, refresh and ``/auth/me``."""
+
+    return {
+        'id': user.id,
+        'firstname': user.firstname,
+        'lastname': user.lastname,
+        'username': f'{user.firstname} {user.lastname}',
+        'email': user.email,
+        'position': user.position or '',
+        'image_id': user.image_id,
+        'image_url': image_url,
+        'status_id': user.status_id,
+        'status_text': status_text,
+    }
 
 
 class RefreshTokenRepository:
@@ -137,15 +171,7 @@ class UserRegisterRepository:
         status_text = status_result.scalar()
 
         return {
-            'user': {
-                'id': user.id,
-                'firstname': user.firstname,
-                'lastname': user.lastname,
-                'username': user.firstname + ' ' + user.lastname,
-                'email': user.email,
-                'status_id': user.status_id,  # Changed from 'status' to 'status_id'
-                'status_text': status_text,
-            },
+            'user': serialize_user(user, status_text),
             'access_token': access_token,
             'refresh_token': refresh_token
         }
@@ -158,10 +184,10 @@ class CheckUserAvailable:
         self.h_password = PasswordHash()
 
     async def check_user_exists(self, login_data: UserLoginSchema) -> UserModel:
-        # Eagerly load status relationship
+        # Eagerly load status/image relationships: async sessions cannot lazy load.
         query = select(UserModel).where(
             UserModel.email == login_data.email.lower()
-        ).options(selectinload(UserModel.status))
+        ).options(selectinload(UserModel.status), selectinload(UserModel.image))
 
         data = await self.db.execute(query)
         user = data.scalar()
@@ -199,15 +225,7 @@ class UserLoginRepository:
             status_text = status_result.scalar()
 
             return {
-                'user': {
-                    'id': user.id,
-                    'firstname': user.firstname,
-                    'lastname': user.lastname,
-                    'username': user.firstname + ' ' + user.lastname,
-                    'email': user.email,
-                    'status_id': user.status_id,  # Changed from 'status' to 'status_id'
-                    'status_text': status_text
-                },
+                'user': serialize_user(user, status_text, user_image_url(user)),
                 'access_token': access_token,
                 'refresh_token': refresh_token
             }
@@ -223,8 +241,12 @@ class UserLoginRepository:
         """Get complete user data with profile for refresh token response"""
 
         try:
-            # Query user with profile relationship
-            query = select(UserModel).where(UserModel.id == user_id)
+            # Query user with the image relationship eager loaded (async-safe).
+            query = (
+                select(UserModel)
+                .where(UserModel.id == user_id)
+                .options(selectinload(UserModel.image))
+            )
             result = await db.execute(query)
             user = result.scalar_one_or_none()
 
@@ -238,15 +260,7 @@ class UserLoginRepository:
             status_text = status_result.scalar()
 
             # Return user data in the same format as login method
-            return {
-                'id': user.id,
-                'firstname': user.firstname,
-                'lastname': user.lastname,
-                'username': user.firstname + ' ' + user.lastname,
-                'email': user.email,
-                'status_id': user.status_id,  # Changed from 'status' to 'status_id'
-                'status_text': status_text
-            }
+            return serialize_user(user, status_text, user_image_url(user))
 
 
         except HTTPException:

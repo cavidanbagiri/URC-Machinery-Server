@@ -183,6 +183,17 @@ def build_object_key(machine_id: int, content_type: str) -> str:
     return f"machines/{int(machine_id)}/{uuid4().hex}{extension}"
 
 
+def build_avatar_key(user_id: int, content_type: str) -> str:
+    """``avatars/<id>/<random>.ext`` for a user's profile photo.
+
+    A fresh key on every upload keeps ``Cache-Control: immutable`` safe: the
+    browser never shows the previous photo from cache after a replacement.
+    """
+
+    extension = ALLOWED_IMAGE_TYPES.get(content_type, ".jpg")
+    return f"avatars/{int(user_id)}/{uuid4().hex}{extension}"
+
+
 # =========================================================
 # URLs
 # =========================================================
@@ -209,6 +220,23 @@ def build_photo_url(object_key: str | None) -> str:
     except (BotoCoreError, ClientError, ValueError):
         logger.exception("Could not presign object %s", object_key)
         return ""
+
+
+def resolve_image_url(value: str | None) -> str:
+    """Browser-facing URL for an ``images.url`` value.
+
+    Older rows may hold an absolute URL while newer ones store an S3 object key,
+    so both forms are accepted. Returns ``""`` when no URL can be built.
+    """
+
+    if not value:
+        return ""
+
+    value = value.strip()
+    if value.startswith(("http://", "https://", "data:")):
+        return value
+
+    return build_photo_url(value)
 
 
 # =========================================================
