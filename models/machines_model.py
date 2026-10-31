@@ -182,6 +182,15 @@ class AllMachineModel(Base):
         order_by="RepairRecordModel.entry_date.desc()",
     )
 
+    # Daily (quick) faults (models/daily_fault_model.py)
+    daily_faults = relationship(
+        "DailyFaultModel",
+        back_populates="machine",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="DailyFaultModel.fault_date.desc()",
+    )
+
     # Machine photos (models/machine_photo_model.py)
     photos = relationship(
         "MachinePhotoModel",
@@ -225,3 +234,7 @@ from models.repair_model import (  # noqa: E402,F401
     RepairTypeModel,
 )
 from models.machine_photo_model import MachinePhotoModel  # noqa: E402,F401
+from models.daily_fault_model import (  # noqa: E402,F401
+    DailyFaultDocumentModel,
+    DailyFaultModel,
+)

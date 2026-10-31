@@ -18,6 +18,7 @@ if str(SERVER_DIR) not in sys.path:
 load_dotenv(SERVER_DIR / ".env")
 
 from db.base import Base  # noqa: E402
+import models.daily_fault_model  # noqa: E402,F401
 import models.garage_service_model  # noqa: E402,F401
 import models.machines_model  # noqa: E402,F401
 import models.machine_photo_model  # noqa: E402,F401

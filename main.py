@@ -14,7 +14,13 @@ from fastapi.middleware.cors import CORSMiddleware
 # Load server/.env before importing routers: database.setup reads env at import.
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
-from routers import auth_router, machines_router, maintenance_router, repair_router  # noqa: E402
+from routers import (  # noqa: E402
+    auth_router,
+    daily_fault_router,
+    machines_router,
+    maintenance_router,
+    repair_router,
+)
 from services.storage_service import missing_configuration  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -72,6 +78,7 @@ app.include_router(router = auth_router.router, prefix="/api/auth", tags=["User"
 app.include_router(router = machines_router.router, prefix="/api/machines", tags=["Machines"])
 app.include_router(router = maintenance_router.router, prefix="/api/maintenance", tags=["Maintenance"])
 app.include_router(router = repair_router.router, prefix="/api/repair", tags=["Repair"])
+app.include_router(router = daily_fault_router.router, prefix="/api/daily-faults", tags=["Daily Fault"])
 
 
 @app.get("/api/health", tags=["Health"])
