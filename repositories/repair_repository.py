@@ -47,6 +47,10 @@ REPAIR_STATUS_ORDER = ["tamirde", "tamamlandi", "iptal"]
 # asking the user for any values. The details are filled in on the Repair page.
 QUICK_OPEN_REPAIR_TYPE_NAME = "Diğer"
 
+# Repair records without a garage service are grouped under this name in the
+# summary card.
+UNASSIGNED_GARAGE_SERVICE_NAME = "Belirtilmemiş"
+
 
 def repair_status(code: str) -> dict[str, str]:
     return dict(REPAIR_STATUS_DEFINITIONS[code])
@@ -112,6 +116,61 @@ def build_updated_message(changed_labels: list[str]) -> str:
 def suggest_exit_date(average_days: float, today: Optional[date] = None) -> date:
     days = max(int(round(average_days)), 1)
     return (today or date.today()) + timedelta(days=days)
+
+
+def compute_active_ratio(active: int, total: int) -> float:
+    """Share (in %) of equipment that is active (not in repair)."""
+
+    if total <= 0:
+        return 0.0
+    return round(active / total * 100, 1)
+
+
+def count_available_equipment(total_machines: int, broken_machines: int) -> int:
+    """Equipment that is not in repair, never below zero."""
+
+    return max(total_machines - broken_machines, 0)
+
+
+def build_garage_breakdown(
+    items: list[dict[str, Any]],
+    garage_services: list[tuple[Optional[int], str]],
+) -> list[dict[str, Any]]:
+    """Group repair items by garage service for the summary card.
+
+    ``garage_services`` holds ``(id, name)`` pairs in display order. Records
+    without a garage service (quick-open/legacy rows) are grouped under
+    ``UNASSIGNED_GARAGE_SERVICE_NAME`` so the card total stays accurate.
+    """
+
+    counts: dict[Optional[int], int] = {}
+    active_counts: dict[Optional[int], int] = {}
+    for item in items:
+        key = item.get("garage_service_id")
+        counts[key] = counts.get(key, 0) + 1
+        if item.get("status") == "tamirde":
+            active_counts[key] = active_counts.get(key, 0) + 1
+
+    breakdown = [
+        {
+            "garage_service_id": service_id,
+            "name": name,
+            "count": counts.get(service_id, 0),
+            "active_count": active_counts.get(service_id, 0),
+        }
+        for service_id, name in garage_services
+    ]
+
+    if counts.get(None):
+        breakdown.append(
+            {
+                "garage_service_id": None,
+                "name": UNASSIGNED_GARAGE_SERVICE_NAME,
+                "count": counts[None],
+                "active_count": active_counts.get(None, 0),
+            }
+        )
+    return breakdown
 
 
 # =========================================================
@@ -526,9 +585,35 @@ class RepairRepository:
                 }
             )
 
+        garage_result = await self.db.execute(
+            select(GarageServiceModel.id, GarageServiceModel.name).order_by(
+                GarageServiceModel.name.asc()
+            )
+        )
+        garage_services = [(row.id, row.name) for row in garage_result.all()]
+
+        total_machines = (
+            await self.db.scalar(select(func.count()).select_from(AllMachineModel))
+        ) or 0
+        broken_machines = len(
+            {item["machine_id"] for item in items if item["status"] == "tamirde"}
+        )
+        active_machines = count_available_equipment(total_machines, broken_machines)
+
         return {
             "total": len(items),
             "active": counts["tamirde"],
+            "active_ratio": compute_active_ratio(active_machines, total_machines),
+            "total_machines": total_machines,
+            "active_machines": active_machines,
+            "broken_machines": broken_machines,
+            "opened_today": sum(1 for item in items if item["entry_date"] == today),
+            "completed_today": sum(
+                1
+                for item in items
+                if item["status"] == "tamamlandi" and item["exit_date"] == today
+            ),
+            "by_garage_service": build_garage_breakdown(items, garage_services),
             "completed": counts["tamamlandi"],
             "cancelled": counts["iptal"],
             "overdue": sum(1 for item in items if item["is_overdue"]),

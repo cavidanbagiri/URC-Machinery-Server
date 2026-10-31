@@ -16,10 +16,14 @@ from repositories.repair_repository import (
     QUICK_OPEN_REPAIR_TYPE_NAME,
     REPAIR_STATUS_DEFINITIONS,
     REPAIR_STATUS_ORDER,
+    UNASSIGNED_GARAGE_SERVICE_NAME,
     build_created_message,
+    build_garage_breakdown,
     build_quick_open_message,
     build_updated_message,
+    compute_active_ratio,
     compute_repair_timing,
+    count_available_equipment,
     suggest_exit_date,
 )
 from schemas.repair_schemas import (
@@ -27,6 +31,7 @@ from schemas.repair_schemas import (
     RepairCloseSchema,
     RepairCreateSchema,
     RepairNoteCreateSchema,
+    RepairSummarySchema,
     RepairUpdateSchema,
 )
 
@@ -113,6 +118,81 @@ class RepairEstimateTests(unittest.TestCase):
             self.assertEqual(definition["code"], code)
             self.assertTrue(definition["name"])
             self.assertTrue(definition["color"])
+
+
+class RepairSummaryTests(unittest.TestCase):
+    def test_active_ratio_handles_counts(self):
+        self.assertEqual(compute_active_ratio(0, 0), 0.0)
+        self.assertEqual(compute_active_ratio(3, 3), 100.0)
+        self.assertEqual(compute_active_ratio(1, 3), 33.3)
+
+    def test_active_ratio_reflects_fleet_availability(self):
+        self.assertEqual(compute_active_ratio(95, 96), 99.0)
+        self.assertEqual(compute_active_ratio(96, 96), 100.0)
+        self.assertEqual(compute_active_ratio(0, 96), 0.0)
+
+    def test_available_equipment_never_negative(self):
+        self.assertEqual(count_available_equipment(96, 1), 95)
+        self.assertEqual(count_available_equipment(96, 0), 96)
+        self.assertEqual(count_available_equipment(2, 5), 0)
+
+    def test_garage_breakdown_groups_by_service(self):
+        items = [
+            {"garage_service_id": 1, "status": "tamirde"},
+            {"garage_service_id": 1, "status": "tamamlandi"},
+            {"garage_service_id": 2, "status": "tamirde"},
+            {"garage_service_id": None, "status": "tamirde"},
+        ]
+
+        breakdown = build_garage_breakdown(
+            items, [(1, "Merkez Garaj"), (2, "Dış Servis")]
+        )
+
+        self.assertEqual(
+            [entry["name"] for entry in breakdown],
+            ["Merkez Garaj", "Dış Servis", UNASSIGNED_GARAGE_SERVICE_NAME],
+        )
+        self.assertEqual([entry["count"] for entry in breakdown], [2, 1, 1])
+        self.assertEqual([entry["active_count"] for entry in breakdown], [1, 1, 1])
+        self.assertIsNone(breakdown[-1]["garage_service_id"])
+
+    def test_garage_breakdown_keeps_service_without_records(self):
+        breakdown = build_garage_breakdown([], [(1, "Merkez Garaj")])
+
+        self.assertEqual(len(breakdown), 1)
+        self.assertEqual(breakdown[0]["count"], 0)
+        self.assertEqual(breakdown[0]["active_count"], 0)
+
+    def test_garage_breakdown_skips_unassigned_when_all_assigned(self):
+        breakdown = build_garage_breakdown(
+            [{"garage_service_id": 1, "status": "tamirde"}],
+            [(1, "Merkez Garaj")],
+        )
+
+        self.assertEqual(len(breakdown), 1)
+        self.assertEqual(breakdown[0]["count"], 1)
+        self.assertEqual(breakdown[0]["active_count"], 1)
+
+    def test_summary_schema_defaults_new_cards(self):
+        summary = RepairSummarySchema(
+            total=1,
+            active=0,
+            completed=1,
+            cancelled=0,
+            overdue=0,
+            due_soon=0,
+            completed_this_month=1,
+            by_status=[],
+            by_type=[],
+        )
+
+        self.assertEqual(summary.active_ratio, 0.0)
+        self.assertEqual(summary.total_machines, 0)
+        self.assertEqual(summary.active_machines, 0)
+        self.assertEqual(summary.broken_machines, 0)
+        self.assertEqual(summary.opened_today, 0)
+        self.assertEqual(summary.completed_today, 0)
+        self.assertEqual(summary.by_garage_service, [])
 
 
 class RepairMessageTests(unittest.TestCase):

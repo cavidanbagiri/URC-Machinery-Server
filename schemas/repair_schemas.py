@@ -224,9 +224,22 @@ class RepairSummaryTypeSchema(BaseModel):
     active_count: int
 
 
+class RepairSummaryGarageSchema(BaseModel):
+    garage_service_id: Optional[int] = None
+    name: str
+    count: int
+    active_count: int
+
+
 class RepairSummarySchema(BaseModel):
     total: int
     active: int
+    active_ratio: float = 0.0
+    total_machines: int = 0
+    active_machines: int = 0
+    broken_machines: int = 0
+    opened_today: int = 0
+    completed_today: int = 0
     completed: int
     cancelled: int
     overdue: int
@@ -235,6 +248,7 @@ class RepairSummarySchema(BaseModel):
     average_repair_days: Optional[float] = None
     by_status: list[RepairSummaryStatusSchema]
     by_type: list[RepairSummaryTypeSchema]
+    by_garage_service: list[RepairSummaryGarageSchema] = Field(default_factory=list)
 
 
 class RepairMachineOptionSchema(BaseModel):
