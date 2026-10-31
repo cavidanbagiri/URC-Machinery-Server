@@ -256,5 +256,20 @@ class RepairSchemaTests(unittest.TestCase):
         )
 
 
+class RepairFilterTests(unittest.TestCase):
+    def test_read_methods_accept_garage_service_filter(self):
+        from inspect import signature
+
+        from repositories.repair_repository import RepairRepository
+
+        for method_name in ("_fetch_items", "fetch_paginated"):
+            with self.subTest(method=method_name):
+                params = signature(
+                    getattr(RepairRepository, method_name)
+                ).parameters
+                self.assertIn("garage_service_id", params)
+                self.assertIsNone(params["garage_service_id"].default)
+
+
 if __name__ == "__main__":
     unittest.main()

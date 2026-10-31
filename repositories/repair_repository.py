@@ -380,6 +380,7 @@ class RepairRepository:
         search: Optional[str] = None,
         status: Optional[str] = None,
         repair_type_id: Optional[int] = None,
+        garage_service_id: Optional[int] = None,
         territory_id: Optional[int] = None,
         type_id: Optional[int] = None,
         company_id: Optional[int] = None,
@@ -407,6 +408,10 @@ class RepairRepository:
             filters.append(RepairRecordModel.status == status)
         if repair_type_id is not None:
             filters.append(RepairRecordModel.repair_type_id == repair_type_id)
+        if garage_service_id is not None:
+            filters.append(
+                RepairRecordModel.garage_service_id == garage_service_id
+            )
         if territory_id is not None:
             filters.append(AllMachineModel.territory_id == territory_id)
         if type_id is not None:
@@ -450,6 +455,7 @@ class RepairRepository:
         search: Optional[str] = None,
         status: Optional[str] = None,
         repair_type_id: Optional[int] = None,
+        garage_service_id: Optional[int] = None,
         territory_id: Optional[int] = None,
         type_id: Optional[int] = None,
         company_id: Optional[int] = None,
@@ -469,6 +475,7 @@ class RepairRepository:
             search=search,
             status=status,
             repair_type_id=repair_type_id,
+            garage_service_id=garage_service_id,
             territory_id=territory_id,
             type_id=type_id,
             company_id=company_id,
