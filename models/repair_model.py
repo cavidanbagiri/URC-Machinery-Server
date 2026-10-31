@@ -22,6 +22,8 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from db.base import Base
+# Imported for SQLAlchemy relationship resolution ("GarageServiceModel").
+from models.garage_service_model import GarageServiceModel  # noqa: F401
 
 
 class RepairTypeModel(Base):
@@ -81,6 +83,14 @@ class RepairRecordModel(Base):
         nullable=False,
         index=True,
     )
+    # Which garage handles the repair. Nullable so quick-open repairs (created
+    # from the machine status modal) and legacy rows remain valid.
+    garage_service_id = Column(
+        Integer,
+        ForeignKey("garage_services.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
 
     fault_location = Column(String(255), nullable=True)
     notes = Column(Text, nullable=True)
@@ -121,6 +131,9 @@ class RepairRecordModel(Base):
 
     machine = relationship("AllMachineModel", back_populates="repair_records")
     repair_type = relationship("RepairTypeModel", back_populates="repair_records")
+    garage_service = relationship(
+        "GarageServiceModel", back_populates="repair_records"
+    )
     previous_machine_status = relationship("CarStatusModel")
     created_by = relationship("UserModel")
     logs = relationship(

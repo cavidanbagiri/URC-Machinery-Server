@@ -9,6 +9,7 @@ from sqlalchemy import case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from models.garage_service_model import GarageServiceModel
 from models.machines_model import (
     AllMachineModel,
     CarMarkModel,
@@ -85,9 +86,13 @@ def format_date_tr(value: Optional[date]) -> str:
 
 
 def build_created_message(
-    repair_type_name: str, fault_location: Optional[str]
+    repair_type_name: str,
+    fault_location: Optional[str],
+    garage_service_name: Optional[str] = None,
 ) -> str:
     message = f"Tamir kaydı oluşturuldu. Tip: {repair_type_name}."
+    if garage_service_name:
+        message += f" Garaj servisi: {garage_service_name}."
     if fault_location:
         message += f" Arıza yeri: {fault_location}."
     return message
@@ -125,6 +130,7 @@ class RepairRepository:
                 RepairRecordModel,
                 AllMachineModel,
                 RepairTypeModel.name.label("repair_type_name"),
+                GarageServiceModel.name.label("garage_service_name"),
                 TerritoryModel.name.label("territory_name"),
                 TypeTransportModel.name.label("type_name"),
                 CompanyModel.name.label("company_name"),
@@ -137,6 +143,10 @@ class RepairRepository:
             .select_from(RepairRecordModel)
             .join(AllMachineModel, RepairRecordModel.machine_id == AllMachineModel.id)
             .join(RepairTypeModel, RepairRecordModel.repair_type_id == RepairTypeModel.id)
+            .outerjoin(
+                GarageServiceModel,
+                RepairRecordModel.garage_service_id == GarageServiceModel.id,
+            )
             .outerjoin(
                 TerritoryModel,
                 AllMachineModel.territory_id == TerritoryModel.id,
@@ -180,6 +190,8 @@ class RepairRepository:
             "machine_id": machine.id,
             "repair_type_id": record.repair_type_id,
             "repair_type_name": row.repair_type_name,
+            "garage_service_id": record.garage_service_id,
+            "garage_service_name": row.garage_service_name,
             "identification_no": machine.identification_no,
             "plate_no": machine.plate_no,
             "vin_no": machine.vin_no,
@@ -255,6 +267,14 @@ class RepairRepository:
         if repair_type is None:
             raise HTTPException(status_code=404, detail="Tamir tipi bulunamadı")
         return repair_type
+
+    async def _get_garage_service(
+        self, garage_service_id: int
+    ) -> GarageServiceModel:
+        garage_service = await self.db.get(GarageServiceModel, garage_service_id)
+        if garage_service is None:
+            raise HTTPException(status_code=404, detail="Garaj servisi bulunamadı")
+        return garage_service
 
     async def _get_quick_open_repair_type(self) -> RepairTypeModel:
         """Prefer the catch-all "Diğer" type, then fall back to the first one."""
@@ -661,6 +681,11 @@ class RepairRepository:
         machine = await self._get_machine(data.machine_id)
         await self._ensure_no_active_repair(data.machine_id)
         repair_type = await self._get_repair_type(data.repair_type_id)
+        garage_service = (
+            await self._get_garage_service(data.garage_service_id)
+            if data.garage_service_id is not None
+            else None
+        )
         tamirde = await self._get_tamirde_status()
 
         previous_status_id = (
@@ -669,6 +694,9 @@ class RepairRepository:
         record = RepairRecordModel(
             machine_id=data.machine_id,
             repair_type_id=data.repair_type_id,
+            garage_service_id=(
+                garage_service.id if garage_service is not None else None
+            ),
             fault_location=data.fault_location,
             notes=data.notes,
             entry_date=data.entry_date,
@@ -685,7 +713,11 @@ class RepairRepository:
             self._add_log(
                 repair_id,
                 "created",
-                build_created_message(repair_type.name, data.fault_location),
+                build_created_message(
+                    repair_type.name,
+                    data.fault_location,
+                    garage_service.name if garage_service is not None else None,
+                ),
                 created_by_id,
             )
             machine.status_id = tamirde.id
@@ -807,6 +839,11 @@ class RepairRepository:
             raise HTTPException(status_code=400, detail="Tamir tipi boş olamaz")
         if "entry_date" in payload and payload["entry_date"] is None:
             raise HTTPException(status_code=400, detail="Giriş tarihi boş olamaz")
+        if (
+            "garage_service_id" in payload
+            and payload["garage_service_id"] is not None
+        ):
+            await self._get_garage_service(payload["garage_service_id"])
 
         new_entry = payload.get("entry_date", record.entry_date)
         new_estimated = (
@@ -840,6 +877,17 @@ class RepairRepository:
         ):
             new_type = await self._get_repair_type(payload["repair_type_id"])
             changed_labels.append(f"tamir tipi ({new_type.name})")
+        if (
+            "garage_service_id" in payload
+            and payload["garage_service_id"] != record.garage_service_id
+        ):
+            if payload["garage_service_id"] is None:
+                changed_labels.append("garaj servisi (kaldırıldı)")
+            else:
+                new_service = await self._get_garage_service(
+                    payload["garage_service_id"]
+                )
+                changed_labels.append(f"garaj servisi ({new_service.name})")
         for field, label in label_map.items():
             if field == "repair_type_id":
                 continue

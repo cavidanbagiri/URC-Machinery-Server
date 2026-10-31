@@ -263,3 +263,18 @@ class FetchRepairTypeSchema(BaseModel):
 
     id: int
     name: str
+
+
+# =========================================================
+# GARAGE SERVICE (Settings lookup)
+# =========================================================
+
+class CreateGarageServiceSchema(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+
+
+class FetchGarageServiceSchema(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str

@@ -128,6 +128,17 @@ class RepairMessageTests(unittest.TestCase):
         self.assertIn("Hidrolik", message)
         self.assertNotIn("Arıza yeri", message)
 
+    def test_created_message_includes_garage_service(self):
+        message = build_created_message("Mekanik", None, "Merkez Garaj")
+
+        self.assertIn("Mekanik", message)
+        self.assertIn("Garaj servisi: Merkez Garaj", message)
+
+    def test_created_message_skips_missing_garage_service(self):
+        message = build_created_message("Mekanik", "Motor bölmesi")
+
+        self.assertNotIn("Garaj servisi", message)
+
     def test_updated_message_lists_changes(self):
         message = build_updated_message(["tamir tipi (Elektrik)", "notlar"])
 
@@ -170,6 +181,36 @@ class RepairSchemaTests(unittest.TestCase):
                 entry_date=date(2026, 10, 10),
                 estimated_exit_date=date(2026, 10, 9),
             )
+
+    def test_create_accepts_garage_service_id(self):
+        data = RepairCreateSchema(
+            machine_id=1, repair_type_id=1, garage_service_id=3
+        )
+
+        self.assertEqual(data.garage_service_id, 3)
+
+    def test_garage_service_id_must_be_positive(self):
+        for invalid_id in (0, -1):
+            with self.subTest(garage_service_id=invalid_id):
+                with self.assertRaises(ValidationError):
+                    RepairCreateSchema(
+                        machine_id=1,
+                        repair_type_id=1,
+                        garage_service_id=invalid_id,
+                    )
+                with self.assertRaises(ValidationError):
+                    RepairUpdateSchema(garage_service_id=invalid_id)
+
+    def test_create_allows_missing_garage_service_id(self):
+        data = RepairCreateSchema(machine_id=1, repair_type_id=1)
+
+        self.assertIsNone(data.garage_service_id)
+
+    def test_update_can_clear_garage_service_id(self):
+        data = RepairUpdateSchema(garage_service_id=None)
+
+        self.assertIn("garage_service_id", data.model_dump(exclude_unset=True))
+        self.assertIsNone(data.garage_service_id)
 
     def test_update_rejects_status_and_empty_type(self):
         with self.assertRaises(ValidationError):

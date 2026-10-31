@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from fastapi import HTTPException
 
+from models.garage_service_model import GarageServiceModel
 from models.machines_model import (
     TerritoryModel,
     TypeTransportModel,
@@ -24,6 +25,7 @@ from schemas.machines_schemas import (
     CreateCarModelSchema,
     CreateCompanySchema, CreateCarStatusSchema, UpdateCarStatusSchema,
     CreateRepairTypeSchema,
+    CreateGarageServiceSchema,
 )
 from services.storage_service import delete_objects
 
@@ -194,6 +196,28 @@ class RepairTypeRepository(_BaseLookupRepository):
             raise HTTPException(
                 status_code=409,
                 detail="Bu tamir tipi kayıtlarda kullanıldığı için silinemez",
+            )
+        await super().delete(obj.id)
+
+
+class GarageServiceRepository(_BaseLookupRepository):
+    model = GarageServiceModel
+    label = "Garaj Servisi"
+
+    async def create(self, data: CreateGarageServiceSchema):
+        return await super().create(data)
+
+    async def delete(self, obj_id: int) -> None:
+        obj = await self.fetch_by_id(obj_id)
+        used = await self.db.execute(
+            select(RepairRecordModel.id)
+            .where(RepairRecordModel.garage_service_id == obj_id)
+            .limit(1)
+        )
+        if used.scalar_one_or_none() is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="Bu garaj servisi kayıtlarda kullanıldığı için silinemez",
             )
         await super().delete(obj.id)
 

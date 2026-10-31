@@ -26,6 +26,10 @@ class RepairCreateSchema(BaseModel):
     machine_id: int = Field(..., gt=0)
     repair_type_id: int = Field(..., gt=0)
 
+    # Enforced as required by the repair form; optional here so quick-open
+    # repairs and older clients keep working.
+    garage_service_id: Optional[int] = Field(None, gt=0)
+
     fault_location: Optional[str] = Field(None, max_length=255)
     notes: Optional[str] = Field(None, max_length=4000)
 
@@ -51,6 +55,7 @@ class RepairUpdateSchema(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     repair_type_id: Optional[int] = Field(None, gt=0)
+    garage_service_id: Optional[int] = Field(None, gt=0)
     fault_location: Optional[str] = Field(None, max_length=255)
     notes: Optional[str] = Field(None, max_length=4000)
     entry_date: Optional[date] = None
@@ -159,6 +164,8 @@ class RepairFetchItemSchema(BaseModel):
     machine_id: int
     repair_type_id: int
     repair_type_name: Optional[str] = None
+    garage_service_id: Optional[int] = None
+    garage_service_name: Optional[str] = None
 
     identification_no: Optional[str] = None
     plate_no: Optional[str] = None

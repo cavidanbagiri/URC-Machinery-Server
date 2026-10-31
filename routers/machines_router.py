@@ -18,6 +18,7 @@ from repositories.machines_repository import (
     CompanyRepository,
     CarStatusRepository,
     RepairTypeRepository,
+    GarageServiceRepository,
 )
 from schemas.machines_schemas import (
     CreateTerritorySchema, FetchTerritorySchema,
@@ -29,6 +30,7 @@ from schemas.machines_schemas import (
     CreateCarStatusSchema, UpdateCarStatusSchema,
     FetchCarStatusSchema, StatusStatisticsSchema, PivotTableSchema,
     CreateRepairTypeSchema, FetchRepairTypeSchema,
+    CreateGarageServiceSchema, FetchGarageServiceSchema,
     FetchMachinePhotoSchema,
 )
 from services.storage_service import (
@@ -899,4 +901,82 @@ async def delete_repair_type(
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Tamir tipi silinemedi: {e}"
+        )
+
+
+# =========================================================
+# GARAGE SERVICE (Garaj Servisi)
+# =========================================================
+
+@router.post(
+    "/create_garage_service",
+    status_code=201,
+    response_model=FetchGarageServiceSchema,
+    dependencies=[Depends(require_write_permission)],
+)
+async def create_garage_service(
+    data: CreateGarageServiceSchema,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    try:
+        return await GarageServiceRepository(db).create(data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Garaj servisi oluşturulamadı: {e}"
+        )
+
+
+@router.get(
+    "/fetch_garage_services",
+    response_model=list[FetchGarageServiceSchema],
+)
+async def fetch_garage_services(db: Annotated[AsyncSession, Depends(get_db)]):
+    try:
+        return await GarageServiceRepository(db).fetch_all()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Garaj servisleri getirilemedi: {e}"
+        )
+
+
+@router.put(
+    "/update_garage_service/{obj_id}",
+    response_model=FetchGarageServiceSchema,
+    dependencies=[Depends(require_write_permission)],
+)
+async def update_garage_service(
+    obj_id: int,
+    data: CreateGarageServiceSchema,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    try:
+        return await GarageServiceRepository(db).update(obj_id, data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Garaj servisi güncellenemedi: {e}"
+        )
+
+
+@router.delete(
+    "/delete_garage_service/{obj_id}",
+    status_code=204,
+    dependencies=[Depends(require_write_permission)],
+)
+async def delete_garage_service(
+    obj_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    try:
+        await GarageServiceRepository(db).delete(obj_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Garaj servisi silinemedi: {e}"
         )
