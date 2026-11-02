@@ -23,6 +23,7 @@ import models.garage_service_model  # noqa: E402,F401
 import models.machines_model  # noqa: E402,F401
 import models.machine_photo_model  # noqa: E402,F401
 import models.maintenance_model  # noqa: E402,F401
+import models.purchase_request_model  # noqa: E402,F401
 import models.repair_model  # noqa: E402,F401
 import models.user_model  # noqa: E402,F401
 

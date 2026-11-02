@@ -200,6 +200,21 @@ class AllMachineModel(Base):
         order_by="MachinePhotoModel.id",
     )
 
+    # Purchase requests (models/purchase_request_model.py)
+    spare_part_request_items = relationship(
+        "SparePartRequestItemModel",
+        back_populates="machine",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    service_requests = relationship(
+        "ServiceRequestModel",
+        back_populates="machine",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="ServiceRequestModel.request_date.desc()",
+    )
+
     def __str__(self):
         return f"{self.identification_no} - {self.vin_no}"
 
@@ -237,4 +252,10 @@ from models.machine_photo_model import MachinePhotoModel  # noqa: E402,F401
 from models.daily_fault_model import (  # noqa: E402,F401
     DailyFaultDocumentModel,
     DailyFaultModel,
+)
+from models.purchase_request_model import (  # noqa: E402,F401
+    ServiceRequestModel,
+    SparePartRequestItemModel,
+    SparePartRequestModel,
+    SparePartRequestTypeModel,
 )
