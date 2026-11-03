@@ -21,6 +21,7 @@ from routers import (  # noqa: E402
     maintenance_router,
     purchase_request_router,
     repair_router,
+    warehouse_router,
 )
 from services.storage_service import missing_configuration  # noqa: E402
 
@@ -82,6 +83,7 @@ app.include_router(router = maintenance_router.router, prefix="/api/maintenance"
 app.include_router(router = repair_router.router, prefix="/api/repair", tags=["Repair"])
 app.include_router(router = daily_fault_router.router, prefix="/api/daily-faults", tags=["Daily Fault"])
 app.include_router(router = purchase_request_router.router, prefix="/api/purchase-requests", tags=["Purchase Requests"])
+app.include_router(router = warehouse_router.router, prefix="/api/warehouse", tags=["Warehouse"])
 
 
 @app.get("/api/health", tags=["Health"])

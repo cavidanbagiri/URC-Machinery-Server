@@ -26,6 +26,7 @@ import models.maintenance_model  # noqa: E402,F401
 import models.purchase_request_model  # noqa: E402,F401
 import models.repair_model  # noqa: E402,F401
 import models.user_model  # noqa: E402,F401
+import models.warehouse_model  # noqa: E402,F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
