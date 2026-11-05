@@ -350,6 +350,137 @@ class RepairFilterTests(unittest.TestCase):
                 self.assertIn("garage_service_id", params)
                 self.assertIsNone(params["garage_service_id"].default)
 
+    def test_read_methods_accept_column_filters(self):
+        """The table header filters must reach both read methods."""
+        from inspect import signature
+
+        from repositories.repair_repository import RepairRepository
+
+        column_filters = (
+            "identification_no",
+            "plate_no",
+            "fault_location",
+            "notes",
+            "exit_date_from",
+            "exit_date_to",
+        )
+
+        for method_name in ("_fetch_items", "fetch_paginated"):
+            params = signature(getattr(RepairRepository, method_name)).parameters
+            for filter_name in column_filters:
+                with self.subTest(method=method_name, filter=filter_name):
+                    self.assertIn(filter_name, params)
+                    self.assertIsNone(params[filter_name].default)
+
+    def test_fetch_repairs_endpoint_exposes_column_filters(self):
+        from inspect import signature
+
+        from routers.repair_router import fetch_repairs
+
+        params = signature(fetch_repairs).parameters
+
+        for filter_name in (
+            "identification_no",
+            "plate_no",
+            "fault_location",
+            "notes",
+            "exit_date_from",
+            "exit_date_to",
+        ):
+            with self.subTest(filter=filter_name):
+                self.assertIn(filter_name, params)
+                # FastAPI wraps the default in Query(...)
+                default = params[filter_name].default
+                self.assertIsNone(getattr(default, "default", default))
+
+
+class CarStatusLookupTests(unittest.TestCase):
+    """The repair status row is renamed by hand, so the lookup must be tolerant.
+
+    The machine statuses are kept in Turkish (Aktif, Bakımda, Hurda, Arızalı)
+    but an admin can re-type them on the Settings page, therefore the resolver
+    accepts the known spellings instead of one exact string.
+    """
+
+    def test_repair_status_aliases_match_known_spellings(self):
+        from repositories.car_status_lookup import is_repair_status_name
+
+        for name in (
+            "Arızalı",
+            "arızalı",
+            "ARIZALI",
+            "Arizali",
+            "  Arızalı  ",
+            "Tamirde",
+            "tamirde",
+            "TAMİRDE",
+            "Təmirdə",
+            "Tamirda",
+        ):
+            with self.subTest(name=name):
+                self.assertTrue(is_repair_status_name(name))
+
+    def test_other_statuses_are_not_treated_as_repair(self):
+        from repositories.car_status_lookup import is_repair_status_name
+
+        for name in ("Aktif", "Bakımda", "Hurda", "", None, "Arıza"):
+            with self.subTest(name=name):
+                self.assertFalse(is_repair_status_name(name))
+
+    def test_pick_repair_status_prefers_name_over_seeded_id(self):
+        from types import SimpleNamespace
+
+        from repositories.car_status_lookup import pick_repair_status
+
+        statuses = [
+            SimpleNamespace(id=1, name="Aktif"),
+            SimpleNamespace(id=7, name="Arızalı"),
+        ]
+        self.assertEqual(pick_repair_status(statuses).id, 7)
+
+    def test_pick_repair_status_falls_back_to_seeded_id(self):
+        from types import SimpleNamespace
+
+        from repositories.car_status_lookup import pick_repair_status
+
+        statuses = [
+            SimpleNamespace(id=1, name="Aktif"),
+            SimpleNamespace(id=2, name="Bozuk"),
+        ]
+        self.assertEqual(pick_repair_status(statuses).id, 2)
+
+    def test_pick_repair_status_returns_none_without_candidate(self):
+        from types import SimpleNamespace
+
+        from repositories.car_status_lookup import pick_repair_status
+
+        statuses = [SimpleNamespace(id=1, name="Aktif")]
+        self.assertIsNone(pick_repair_status(statuses))
+
+    def test_missing_status_raises_409_with_actionable_message(self):
+        from repositories.car_status_lookup import REPAIR_STATUS_MISSING_DETAIL
+
+        try:
+            from repositories.car_status_lookup import pick_repair_status
+        except ImportError:  # pragma: no cover - defensive
+            self.fail("pick_repair_status is not importable")
+
+        self.assertIsNone(pick_repair_status([]))
+        self.assertIn("Ayarlar", REPAIR_STATUS_MISSING_DETAIL)
+        self.assertIn("Arızalı", REPAIR_STATUS_MISSING_DETAIL)
+
+    def test_repair_repository_uses_the_tolerant_lookup(self):
+        from inspect import signature
+
+        from repositories.repair_repository import RepairRepository
+
+        self.assertTrue(hasattr(RepairRepository, "_get_repair_status"))
+        self.assertFalse(hasattr(RepairRepository, "_get_tamirde_status"))
+        self.assertEqual(
+            list(signature(RepairRepository._get_repair_status).parameters),
+            ["self"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -51,6 +51,13 @@ async def fetch_repairs(
     date_to: Optional[date] = Query(None),
     overdue: Optional[bool] = Query(None),
     due_soon: Optional[bool] = Query(None),
+    # Per-column filters used by the table header inputs.
+    identification_no: Optional[str] = Query(None, max_length=50),
+    plate_no: Optional[str] = Query(None, max_length=50),
+    fault_location: Optional[str] = Query(None, max_length=255),
+    notes: Optional[str] = Query(None, max_length=255),
+    exit_date_from: Optional[date] = Query(None),
+    exit_date_to: Optional[date] = Query(None),
 ):
     try:
         return await RepairRepository(db).fetch_paginated(
@@ -67,6 +74,12 @@ async def fetch_repairs(
             date_to=date_to,
             overdue=overdue,
             due_soon=due_soon,
+            identification_no=identification_no,
+            plate_no=plate_no,
+            fault_location=fault_location,
+            notes=notes,
+            exit_date_from=exit_date_from,
+            exit_date_to=exit_date_to,
         )
     except HTTPException:
         raise

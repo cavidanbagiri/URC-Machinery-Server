@@ -219,5 +219,73 @@ class RepositoryHelperTests(unittest.TestCase):
         self.assertEqual(status_label(None), "Bekleniyor")
 
 
+class ColumnFilterParamTests(unittest.TestCase):
+    """The Excel-style column filters must reach the repository."""
+
+    def test_repository_accepts_service_column_filters(self):
+        from inspect import signature
+
+        from repositories.purchase_request_repository import (
+            PurchaseRequestRepository,
+        )
+
+        column_filters = (
+            "identification_no",
+            "company_name",
+            "service_description",
+            "date_from",
+            "date_to",
+        )
+
+        for method_name in ("_service_rows", "fetch_service_requests"):
+            params = signature(
+                getattr(PurchaseRequestRepository, method_name)
+            ).parameters
+            for filter_name in column_filters:
+                with self.subTest(method=method_name, filter=filter_name):
+                    self.assertIn(filter_name, params)
+                    self.assertIsNone(params[filter_name].default)
+
+    def test_repository_accepts_spare_part_machine_filter(self):
+        from inspect import signature
+
+        from repositories.purchase_request_repository import (
+            PurchaseRequestRepository,
+        )
+
+        for method_name in ("_spare_rows", "fetch_spare_part_requests"):
+            params = signature(
+                getattr(PurchaseRequestRepository, method_name)
+            ).parameters
+            with self.subTest(method=method_name):
+                self.assertIn("identification_no", params)
+                self.assertIsNone(params["identification_no"].default)
+
+    def test_list_endpoints_expose_column_filters(self):
+        from inspect import signature
+
+        from routers.purchase_request_router import (
+            fetch_service_requests,
+            fetch_spare_part_requests,
+        )
+
+        cases = (
+            (fetch_spare_part_requests, ("identification_no",)),
+            (
+                fetch_service_requests,
+                ("identification_no", "company_name", "service_description"),
+            ),
+        )
+
+        for endpoint, filter_names in cases:
+            params = signature(endpoint).parameters
+            for filter_name in filter_names:
+                with self.subTest(endpoint=endpoint.__name__, filter=filter_name):
+                    self.assertIn(filter_name, params)
+                    # FastAPI wraps the default in Query(...)
+                    default = params[filter_name].default
+                    self.assertIsNone(getattr(default, "default", default))
+
+
 if __name__ == "__main__":
     unittest.main()

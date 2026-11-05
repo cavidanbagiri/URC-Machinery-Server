@@ -293,6 +293,8 @@ class MaintenanceRepository:
         include_inactive: bool = False,
         territory_id: Optional[int] = None,
         type_id: Optional[int] = None,
+        car_mark_id: Optional[int] = None,
+        car_model_id: Optional[int] = None,
         company_id: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
@@ -315,6 +317,10 @@ class MaintenanceRepository:
             filters.append(AllMachineModel.territory_id == territory_id)
         if type_id is not None:
             filters.append(AllMachineModel.type_id == type_id)
+        if car_mark_id is not None:
+            filters.append(AllMachineModel.car_mark_id == car_mark_id)
+        if car_model_id is not None:
+            filters.append(AllMachineModel.car_model_id == car_model_id)
         if company_id is not None:
             filters.append(AllMachineModel.company_id == company_id)
         if has_plan is True:
@@ -396,6 +402,8 @@ class MaintenanceRepository:
         include_inactive: bool = False,
         territory_id: Optional[int] = None,
         type_id: Optional[int] = None,
+        car_mark_id: Optional[int] = None,
+        car_model_id: Optional[int] = None,
         company_id: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
@@ -416,6 +424,8 @@ class MaintenanceRepository:
             include_inactive=include_inactive,
             territory_id=territory_id,
             type_id=type_id,
+            car_mark_id=car_mark_id,
+            car_model_id=car_model_id,
             company_id=company_id,
             sort_by=sort_by,
             sort_order=sort_order,

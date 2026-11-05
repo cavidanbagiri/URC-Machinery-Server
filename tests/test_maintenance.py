@@ -279,5 +279,39 @@ class MaintenanceSchemaTests(unittest.TestCase):
             MaintenanceCompleteSchema(counter_value=-1)
 
 
+class MaintenanceColumnFilterTests(unittest.TestCase):
+    """Marka/Model columns are filtered server-side, like the repair table."""
+
+    COLUMN_FILTERS = ("car_mark_id", "car_model_id")
+
+    def test_repository_accepts_mark_and_model_filters(self):
+        from inspect import signature
+
+        from repositories.maintenance_repository import MaintenanceRepository
+
+        for method_name in ("_fetch_items", "fetch_paginated"):
+            params = signature(
+                getattr(MaintenanceRepository, method_name)
+            ).parameters
+            for filter_name in self.COLUMN_FILTERS:
+                with self.subTest(method=method_name, filter=filter_name):
+                    self.assertIn(filter_name, params)
+                    self.assertIsNone(params[filter_name].default)
+
+    def test_fetch_maintenance_endpoint_exposes_column_filters(self):
+        from inspect import signature
+
+        from routers.maintenance_router import fetch_maintenance
+
+        params = signature(fetch_maintenance).parameters
+
+        for filter_name in self.COLUMN_FILTERS:
+            with self.subTest(filter=filter_name):
+                self.assertIn(filter_name, params)
+                # FastAPI wraps the default in Query(...)
+                default = params[filter_name].default
+                self.assertIsNone(getattr(default, "default", default))
+
+
 if __name__ == "__main__":
     unittest.main()

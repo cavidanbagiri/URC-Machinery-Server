@@ -17,6 +17,7 @@ from models.machines_model import (
     CarStatusModel
 )
 from models.repair_model import RepairRecordModel, RepairTypeModel
+from repositories.car_status_lookup import resolve_repair_status
 from schemas.machines_schemas import (
     CreateTerritorySchema,
     CreateTypeTransportSchema,
@@ -462,14 +463,8 @@ class AllMachineRepository:
                 .limit(1)
             )
             if active_repair.scalar_one_or_none() is not None:
-                tamirde = await self.db.execute(
-                    select(CarStatusModel.id)
-                    .where(
-                        func.lower(CarStatusModel.name) == "tamirde"
-                    )
-                    .limit(1)
-                )
-                if data.status_id != tamirde.scalar_one_or_none():
+                repair_status = await resolve_repair_status(self.db)
+                if data.status_id != repair_status.id:
                     raise HTTPException(
                         status_code=409,
                         detail=(

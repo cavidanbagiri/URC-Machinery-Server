@@ -21,6 +21,7 @@ from models.machines_model import (
 )
 from models.repair_model import RepairLogModel, RepairRecordModel, RepairTypeModel
 from models.user_model import UserModel
+from repositories.car_status_lookup import resolve_repair_status
 from schemas.repair_schemas import (
     RepairCancelSchema,
     RepairCloseSchema,
@@ -369,19 +370,14 @@ class RepairRepository:
             raise HTTPException(status_code=404, detail="Tamir kaydı bulunamadı")
         return record
 
-    async def _get_tamirde_status(self) -> CarStatusModel:
-        result = await self.db.execute(
-            select(CarStatusModel).where(
-                func.lower(CarStatusModel.name) == "tamirde"
-            )
-        )
-        status = result.scalars().first()
-        if status is None:
-            raise HTTPException(
-                status_code=500,
-                detail="Tamirde makine durumu tanımlı değil",
-            )
-        return status
+    async def _get_repair_status(self) -> CarStatusModel:
+        """Return the machine status that marks a machine as under repair.
+
+        The label is operator-managed (Settings → Makine Durumu can rename
+        "Arızalı"), so the lookup accepts the known spellings instead of one
+        exact string. See ``repositories.car_status_lookup``.
+        """
+        return await resolve_repair_status(self.db)
 
     async def _ensure_no_active_repair(
         self, machine_id: int, exclude_id: Optional[int] = None
@@ -400,13 +396,13 @@ class RepairRepository:
 
     async def _restore_machine_status(self, record: RepairRecordModel) -> None:
         machine = await self._get_machine(record.machine_id)
-        tamirde = await self._get_tamirde_status()
+        repair_status = await self._get_repair_status()
 
         target_id = record.previous_machine_status_id
-        if target_id is None or target_id == tamirde.id:
+        if target_id is None or target_id == repair_status.id:
             result = await self.db.execute(
                 select(CarStatusModel.id)
-                .where(CarStatusModel.id != tamirde.id)
+                .where(CarStatusModel.id != repair_status.id)
                 .order_by(CarStatusModel.id.asc())
                 .limit(1)
             )
@@ -447,6 +443,12 @@ class RepairRepository:
         date_to: Optional[date] = None,
         overdue: Optional[bool] = None,
         due_soon: Optional[bool] = None,
+        identification_no: Optional[str] = None,
+        plate_no: Optional[str] = None,
+        fault_location: Optional[str] = None,
+        notes: Optional[str] = None,
+        exit_date_from: Optional[date] = None,
+        exit_date_to: Optional[date] = None,
     ) -> list[dict[str, Any]]:
         query = self._base_select()
         filters = []
@@ -481,6 +483,33 @@ class RepairRepository:
             filters.append(RepairRecordModel.entry_date >= date_from)
         if date_to is not None:
             filters.append(RepairRecordModel.entry_date <= date_to)
+        # Per-column (table header) filters — case-insensitive, partial match.
+        if identification_no and identification_no.strip():
+            filters.append(
+                AllMachineModel.identification_no.ilike(
+                    f"%{identification_no.strip()}%"
+                )
+            )
+        if plate_no and plate_no.strip():
+            filters.append(
+                AllMachineModel.plate_no.ilike(f"%{plate_no.strip()}%")
+            )
+        if fault_location and fault_location.strip():
+            filters.append(
+                RepairRecordModel.fault_location.ilike(
+                    f"%{fault_location.strip()}%"
+                )
+            )
+        if notes and notes.strip():
+            filters.append(
+                RepairRecordModel.notes.ilike(f"%{notes.strip()}%")
+            )
+        if exit_date_from is not None:
+            filters.append(
+                RepairRecordModel.estimated_exit_date >= exit_date_from
+            )
+        if exit_date_to is not None:
+            filters.append(RepairRecordModel.estimated_exit_date <= exit_date_to)
 
         if filters:
             query = query.where(*filters)
@@ -522,6 +551,12 @@ class RepairRepository:
         date_to: Optional[date] = None,
         overdue: Optional[bool] = None,
         due_soon: Optional[bool] = None,
+        identification_no: Optional[str] = None,
+        plate_no: Optional[str] = None,
+        fault_location: Optional[str] = None,
+        notes: Optional[str] = None,
+        exit_date_from: Optional[date] = None,
+        exit_date_to: Optional[date] = None,
     ) -> dict[str, Any]:
         if limit < 1:
             limit = 20
@@ -542,6 +577,12 @@ class RepairRepository:
             date_to=date_to,
             overdue=overdue,
             due_soon=due_soon,
+            identification_no=identification_no,
+            plate_no=plate_no,
+            fault_location=fault_location,
+            notes=notes,
+            exit_date_from=exit_date_from,
+            exit_date_to=exit_date_to,
         )
         return {
             "total": len(items),
@@ -778,10 +819,10 @@ class RepairRepository:
             if data.garage_service_id is not None
             else None
         )
-        tamirde = await self._get_tamirde_status()
+        repair_status = await self._get_repair_status()
 
         previous_status_id = (
-            machine.status_id if machine.status_id != tamirde.id else None
+            machine.status_id if machine.status_id != repair_status.id else None
         )
         record = RepairRecordModel(
             machine_id=data.machine_id,
@@ -812,7 +853,7 @@ class RepairRepository:
                 ),
                 created_by_id,
             )
-            machine.status_id = tamirde.id
+            machine.status_id = repair_status.id
             await self.db.commit()
         except IntegrityError:
             await self.db.rollback()
@@ -839,7 +880,7 @@ class RepairRepository:
         returned unchanged so the operation is idempotent.
         """
         machine = await self._get_machine(machine_id)
-        tamirde = await self._get_tamirde_status()
+        repair_status = await self._get_repair_status()
 
         result = await self.db.execute(
             select(RepairRecordModel.id)
@@ -851,8 +892,8 @@ class RepairRepository:
         )
         existing_id = result.scalar_one_or_none()
         if existing_id is not None:
-            if machine.status_id != tamirde.id:
-                machine.status_id = tamirde.id
+            if machine.status_id != repair_status.id:
+                machine.status_id = repair_status.id
                 try:
                     await self.db.commit()
                 except Exception:
@@ -862,7 +903,7 @@ class RepairRepository:
 
         repair_type = await self._get_quick_open_repair_type()
         previous_status_id = (
-            machine.status_id if machine.status_id != tamirde.id else None
+            machine.status_id if machine.status_id != repair_status.id else None
         )
         record = RepairRecordModel(
             machine_id=machine_id,
@@ -883,7 +924,7 @@ class RepairRepository:
                 build_quick_open_message(),
                 created_by_id,
             )
-            machine.status_id = tamirde.id
+            machine.status_id = repair_status.id
             await self.db.commit()
         except IntegrityError:
             await self.db.rollback()
@@ -1087,13 +1128,13 @@ class RepairRepository:
 
         await self._ensure_no_active_repair(record.machine_id, exclude_id=repair_id)
         machine = await self._get_machine(record.machine_id)
-        tamirde = await self._get_tamirde_status()
+        repair_status = await self._get_repair_status()
 
-        if machine.status_id != tamirde.id:
+        if machine.status_id != repair_status.id:
             record.previous_machine_status_id = machine.status_id
         record.status = "tamirde"
         record.exit_date = None
-        machine.status_id = tamirde.id
+        machine.status_id = repair_status.id
 
         message = "Tamir kaydı yeniden açıldı."
         if data.notes:

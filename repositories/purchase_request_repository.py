@@ -130,6 +130,7 @@ class PurchaseRequestRepository:
         self,
         *,
         search: Optional[str] = None,
+        identification_no: Optional[str] = None,
         status: Optional[str] = None,
         territory_id: Optional[int] = None,
         request_type_id: Optional[int] = None,
@@ -176,6 +177,28 @@ class PurchaseRequestRepository:
                     machine_match,
                     garage_match,
                 )
+            )
+
+        machine_pattern = build_search_pattern(identification_no)
+        if machine_pattern:
+            # Excel-style "ID No" column filter: match the machine numbers of
+            # the request's item rows without duplicating the request itself.
+            query = query.where(
+                select(SparePartRequestItemModel.id)
+                .join(
+                    AllMachineModel,
+                    SparePartRequestItemModel.machine_id == AllMachineModel.id,
+                )
+                .where(
+                    SparePartRequestItemModel.request_id
+                    == SparePartRequestModel.id,
+                    or_(
+                        AllMachineModel.identification_no.ilike(machine_pattern),
+                        AllMachineModel.plate_no.ilike(machine_pattern),
+                        AllMachineModel.vin_no.ilike(machine_pattern),
+                    ),
+                )
+                .exists()
             )
 
         if status:
@@ -305,6 +328,7 @@ class PurchaseRequestRepository:
         limit: int = DEFAULT_LIMIT,
         offset: int = 0,
         search: Optional[str] = None,
+        identification_no: Optional[str] = None,
         status: Optional[str] = None,
         territory_id: Optional[int] = None,
         request_type_id: Optional[int] = None,
@@ -314,6 +338,7 @@ class PurchaseRequestRepository:
         limit, offset = clamp_pagination(limit, offset)
         rows = await self._spare_rows(
             search=search,
+            identification_no=identification_no,
             status=status,
             territory_id=territory_id,
             request_type_id=request_type_id,
@@ -491,6 +516,9 @@ class PurchaseRequestRepository:
         self,
         *,
         search: Optional[str] = None,
+        identification_no: Optional[str] = None,
+        company_name: Optional[str] = None,
+        service_description: Optional[str] = None,
         date_from=None,
         date_to=None,
     ):
@@ -514,6 +542,27 @@ class PurchaseRequestRepository:
             query = query.where(ServiceRequestModel.request_date >= date_from)
         if date_to:
             query = query.where(ServiceRequestModel.request_date <= date_to)
+
+        # Excel-style column filters — each one narrows a single table column.
+        machine_pattern = build_search_pattern(identification_no)
+        if machine_pattern:
+            query = query.where(
+                or_(
+                    AllMachineModel.identification_no.ilike(machine_pattern),
+                    AllMachineModel.plate_no.ilike(machine_pattern),
+                    AllMachineModel.vin_no.ilike(machine_pattern),
+                )
+            )
+        company_pattern = build_search_pattern(company_name)
+        if company_pattern:
+            query = query.where(
+                ServiceRequestModel.company_name.ilike(company_pattern)
+            )
+        description_pattern = build_search_pattern(service_description)
+        if description_pattern:
+            query = query.where(
+                ServiceRequestModel.service_description.ilike(description_pattern)
+            )
 
         result = await self.db.execute(
             query.order_by(
@@ -561,12 +610,20 @@ class PurchaseRequestRepository:
         limit: int = DEFAULT_LIMIT,
         offset: int = 0,
         search: Optional[str] = None,
+        identification_no: Optional[str] = None,
+        company_name: Optional[str] = None,
+        service_description: Optional[str] = None,
         date_from=None,
         date_to=None,
     ) -> dict[str, Any]:
         limit, offset = clamp_pagination(limit, offset)
         rows = await self._service_rows(
-            search=search, date_from=date_from, date_to=date_to
+            search=search,
+            identification_no=identification_no,
+            company_name=company_name,
+            service_description=service_description,
+            date_from=date_from,
+            date_to=date_to,
         )
         return {
             "total": len(rows),
