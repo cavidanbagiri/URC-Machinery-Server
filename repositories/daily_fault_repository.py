@@ -3,7 +3,6 @@
 
 from datetime import date
 from typing import Any, Optional
-from urllib.parse import quote
 
 from fastapi import HTTPException
 from sqlalchemy import or_, select
@@ -24,98 +23,21 @@ from models.machines_model import (
 )
 from models.repair_model import RepairTypeModel
 from models.user_model import UserModel
+from repositories.pdf_documents import (
+    clamp_pagination,
+    content_disposition,
+    sanitize_file_name,
+    validate_document,
+)
 from schemas.daily_fault_schemas import DailyFaultCreateSchema, normalize_km_hour
 
 DEFAULT_LIMIT = 20
 MAX_LIMIT = 100
 MAX_MACHINE_OPTIONS = 50
 
-#: Browsers occasionally send "application/x-pdf"; both mean the same file.
-ALLOWED_DOCUMENT_TYPES = {
-    "application/pdf": ".pdf",
-    "application/x-pdf": ".pdf",
-}
-#: Some browsers submit an empty type (or octet-stream) for local files.
-_FALLBACK_DOCUMENT_TYPES = {"", "application/octet-stream"}
-_PDF_SIGNATURE = b"%PDF-"
-_FALLBACK_DOCUMENT_NAME = "evrak.pdf"
-
-
-# =========================================================
-# PURE HELPERS (unit tested without a database)
-# =========================================================
-
-def clamp_pagination(limit: int, offset: int) -> tuple[int, int]:
-    """Keep client supplied paging inside the API limits."""
-
-    limit = DEFAULT_LIMIT if limit < 1 else min(limit, MAX_LIMIT)
-    offset = max(offset, 0)
-    return limit, offset
-
-
-def sanitize_file_name(file_name: Optional[str]) -> str:
-    """Take the base name only: never trust a path sent by the browser."""
-
-    name = (file_name or "").replace("\\", "/").split("/")[-1].strip()
-    name = name[:255].strip()
-    return name or _FALLBACK_DOCUMENT_NAME
-
-
-def resolve_document_content_type(
-    file_name: str, content_type: Optional[str]
-) -> str:
-    """Normalize the browser supplied type; only PDFs are accepted."""
-
-    raw = (content_type or "").split(";")[0].strip().lower()
-    if raw in ALLOWED_DOCUMENT_TYPES:
-        return "application/pdf"
-    if raw in _FALLBACK_DOCUMENT_TYPES and file_name.lower().endswith(".pdf"):
-        return "application/pdf"
-    raise ValueError("Sadece PDF dosyaları yüklenebilir")
-
-
-def validate_document(
-    file_name: Optional[str], content_type: Optional[str], data: bytes
-) -> dict[str, Any]:
-    """Validate an uploaded paper; raises ``ValueError`` with a Turkish text."""
-
-    if not data:
-        raise ValueError("Boş dosya yüklenemez")
-
-    if len(data) > MAX_DOCUMENT_BYTES:
-        limit_mb = MAX_DOCUMENT_BYTES // (1024 * 1024)
-        raise ValueError(f"Evrak boyutu en fazla {limit_mb} MB olabilir")
-
-    resolved_name = sanitize_file_name(file_name)
-    resolved_type = resolve_document_content_type(
-        file_name or resolved_name, content_type
-    )
-
-    # Content type and extension are client supplied; the signature is not.
-    if not data.startswith(_PDF_SIGNATURE):
-        raise ValueError("Dosya geçerli bir PDF değil")
-
-    return {
-        "file_name": resolved_name,
-        "content_type": resolved_type,
-        "file_size": len(data),
-    }
-
-
-def content_disposition(file_name: str, *, download: bool = False) -> str:
-    """RFC 5987 header so Turkish file names survive the download."""
-
-    disposition = "attachment" if download else "inline"
-    name = sanitize_file_name(file_name)
-    ascii_name = (
-        name.encode("ascii", "ignore").decode("ascii") or _FALLBACK_DOCUMENT_NAME
-    )
-    # Quotes would break the quoted-string parameter; filename* keeps the real name.
-    ascii_name = ascii_name.replace('"', "_")
-    return (
-        f'{disposition}; filename="{ascii_name}"; '
-        f"filename*=UTF-8''{quote(name, safe='')}"
-    )
+#: ``clamp_pagination``, ``sanitize_file_name``, ``validate_document`` and
+#: ``content_disposition`` are imported from ``repositories.pdf_documents``:
+#: daily faults and tire changes must apply exactly the same PDF rules.
 
 
 # =========================================================
@@ -432,7 +354,12 @@ class DailyFaultRepository:
         fault = await self._get_fault(fault_id)
 
         try:
-            info = validate_document(file_name, content_type, data)
+            info = validate_document(
+                file_name,
+                content_type,
+                data,
+                max_bytes=MAX_DOCUMENT_BYTES,
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
