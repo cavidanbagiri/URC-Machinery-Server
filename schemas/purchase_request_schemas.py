@@ -167,6 +167,19 @@ class ServiceRequestCreateSchema(BaseModel):
 # READ
 # =========================================================
 
+class SparePartRequestDocumentSchema(BaseModel):
+    """Metadata of one PDF stored for a request; the bytes come from
+    ``GET /spare-parts/{request_id}/documents/{document_id}``."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    file_name: str
+    content_type: str = "application/pdf"
+    file_size: int = 0
+    created_at: Optional[datetime] = None
+
+
 class SparePartRequestItemSchema(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -212,6 +225,7 @@ class SparePartRequestSchema(BaseModel):
     updated_at: Optional[datetime] = None
 
     items: list[SparePartRequestItemSchema] = Field(default_factory=list)
+    documents: list[SparePartRequestDocumentSchema] = Field(default_factory=list)
 
 
 class PaginatedSparePartRequestSchema(BaseModel):
@@ -277,6 +291,7 @@ __all__ = [
     "ServiceRequestCreateSchema",
     "ServiceRequestSchema",
     "SparePartRequestCreateSchema",
+    "SparePartRequestDocumentSchema",
     "SparePartRequestItemCreateSchema",
     "SparePartRequestItemSchema",
     "SparePartRequestSchema",

@@ -287,5 +287,109 @@ class ColumnFilterParamTests(unittest.TestCase):
                     self.assertIsNone(getattr(default, "default", default))
 
 
+class SparePartDocumentTests(unittest.TestCase):
+    """The PDF attachment of a spare-part request (upload / read surface)."""
+
+    def test_max_document_bytes_matches_the_daily_fault_limit(self):
+        from models.daily_fault_model import MAX_DOCUMENT_BYTES as DAILY_LIMIT
+        from models.purchase_request_model import MAX_DOCUMENT_BYTES
+
+        self.assertEqual(MAX_DOCUMENT_BYTES, DAILY_LIMIT)
+        self.assertEqual(MAX_DOCUMENT_BYTES, 10 * 1024 * 1024)
+
+    def test_document_table_mirrors_the_size_limit(self):
+        from models.purchase_request_model import (
+            MAX_DOCUMENT_BYTES,
+            SparePartRequestDocumentModel,
+        )
+
+        constraints = {
+            constraint.name: str(constraint.sqltext)
+            for constraint in SparePartRequestDocumentModel.__table__.constraints
+            if constraint.name
+        }
+
+        self.assertEqual(
+            constraints["ck_spare_part_request_documents_size_positive"],
+            "file_size > 0",
+        )
+        self.assertEqual(
+            constraints["ck_spare_part_request_documents_size_limit"],
+            f"file_size <= {MAX_DOCUMENT_BYTES}",
+        )
+
+    def test_document_is_cascaded_with_its_request(self):
+        from models.purchase_request_model import SparePartRequestDocumentModel
+
+        foreign_keys = {
+            fk.parent.name: (fk.column.table.name, fk.ondelete)
+            for fk in SparePartRequestDocumentModel.__table__.foreign_keys
+        }
+
+        self.assertEqual(
+            foreign_keys["request_id"], ("spare_part_requests", "CASCADE")
+        )
+        self.assertEqual(foreign_keys["uploaded_by_id"], ("users", "SET NULL"))
+
+    def test_request_schema_serializes_documents(self):
+        from schemas.purchase_request_schemas import SparePartRequestSchema
+
+        data = payload(status="bekleniyor")
+        data.pop("items")
+        data["id"] = 9
+        documents = [
+            {
+                "id": 4,
+                "file_name": "Sipariş.pdf",
+                "content_type": "application/pdf",
+                "file_size": 2048,
+            }
+        ]
+
+        schema = SparePartRequestSchema(**data, documents=documents)
+
+        self.assertEqual([document.id for document in schema.documents], [4])
+        self.assertEqual(schema.documents[0].file_name, "Sipariş.pdf")
+        self.assertEqual(schema.documents[0].file_size, 2048)
+
+    def test_request_schema_documents_default_to_empty(self):
+        from schemas.purchase_request_schemas import SparePartRequestSchema
+
+        data = payload()
+        data.pop("items")
+        data["id"] = 9
+
+        schema = SparePartRequestSchema(**data)
+
+        self.assertEqual(schema.documents, [])
+
+    def test_repository_exposes_document_methods(self):
+        from inspect import signature
+
+        from repositories.purchase_request_repository import (
+            PurchaseRequestRepository,
+        )
+
+        for method_name in ("add_document", "get_document", "delete_document"):
+            with self.subTest(method=method_name):
+                self.assertTrue(
+                    hasattr(PurchaseRequestRepository, method_name)
+                )
+
+        add_params = signature(PurchaseRequestRepository.add_document).parameters
+        self.assertIn("data", add_params)
+        self.assertEqual(add_params["data"].kind.name, "KEYWORD_ONLY")
+
+    def test_router_registers_document_endpoints(self):
+        from routers.purchase_request_router import router
+
+        paths = {route.path for route in router.routes}
+
+        self.assertIn("/spare-parts/{request_id}/documents", paths)
+        self.assertIn(
+            "/spare-parts/{request_id}/documents/{document_id}", paths
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

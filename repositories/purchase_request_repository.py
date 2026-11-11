@@ -10,14 +10,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.machines_model import AllMachineModel, TerritoryModel
 from models.purchase_request_model import (
+    MAX_DOCUMENT_BYTES,
     SPARE_PART_STATUSES,
     ServiceRequestModel,
+    SparePartRequestDocumentModel,
     SparePartRequestItemModel,
     SparePartRequestModel,
     SparePartRequestTypeModel,
     status_label,
 )
 from models.user_model import UserModel
+from repositories.pdf_documents import validate_document
 from schemas.purchase_request_schemas import (
     ServiceRequestCreateSchema,
     SparePartRequestCreateSchema,
@@ -267,8 +270,40 @@ class PurchaseRequestRepository:
             )
         return grouped
 
+    async def _documents_for(
+        self, request_ids: list[int]
+    ) -> dict[int, list[dict[str, Any]]]:
+        """Document metadata of every request; the PDF bytes stay untouched."""
+
+        grouped: dict[int, list[dict[str, Any]]] = {
+            request_id: [] for request_id in request_ids
+        }
+        if not request_ids:
+            return grouped
+
+        result = await self.db.execute(
+            select(SparePartRequestDocumentModel)
+            .where(SparePartRequestDocumentModel.request_id.in_(request_ids))
+            .order_by(SparePartRequestDocumentModel.id.asc())
+        )
+
+        for document in result.scalars().all():
+            grouped[document.request_id].append(
+                {
+                    "id": document.id,
+                    "file_name": document.file_name,
+                    "content_type": document.content_type,
+                    "file_size": document.file_size,
+                    "created_at": document.created_at,
+                }
+            )
+        return grouped
+
     def _spare_row_to_item(
-        self, row, items: list[dict[str, Any]]
+        self,
+        row,
+        items: list[dict[str, Any]],
+        documents: Optional[list[dict[str, Any]]] = None,
     ) -> dict[str, Any]:
         request: SparePartRequestModel = row[0]
 
@@ -308,6 +343,7 @@ class PurchaseRequestRepository:
             "created_at": request.created_at,
             "updated_at": request.updated_at,
             "items": items,
+            "documents": documents or [],
         }
 
     async def _get_spare_request(self, request_id: int) -> dict[str, Any]:
@@ -320,7 +356,12 @@ class PurchaseRequestRepository:
                 status_code=404, detail="Yedek parça talebi bulunamadı"
             )
         items = await self._items_for([request_id])
-        return self._spare_row_to_item(row, items.get(request_id, []))
+        documents = await self._documents_for([request_id])
+        return self._spare_row_to_item(
+            row,
+            items.get(request_id, []),
+            documents.get(request_id, []),
+        )
 
     async def fetch_spare_part_requests(
         self,
@@ -348,12 +389,17 @@ class PurchaseRequestRepository:
 
         page = rows[offset : offset + limit]
         items = await self._items_for([row[0].id for row in page])
+        documents = await self._documents_for([row[0].id for row in page])
         return {
             "total": len(rows),
             "limit": limit,
             "offset": offset,
             "items": [
-                self._spare_row_to_item(row, items.get(row[0].id, []))
+                self._spare_row_to_item(
+                    row,
+                    items.get(row[0].id, []),
+                    documents.get(row[0].id, []),
+                )
                 for row in page
             ],
         }
@@ -492,6 +538,76 @@ class PurchaseRequestRepository:
         except Exception:
             await self.db.rollback()
             raise
+
+    # ---------- SPARE PART DOCUMENTS ----------
+
+    async def add_document(
+        self,
+        request_id: int,
+        *,
+        file_name: Optional[str],
+        content_type: Optional[str],
+        data: bytes,
+        user_id: Optional[int],
+    ) -> dict[str, Any]:
+        """Attach a PDF to a request; the request row is returned with it."""
+
+        request = await self.db.get(SparePartRequestModel, request_id)
+        if request is None:
+            raise HTTPException(
+                status_code=404, detail="Yedek parça talebi bulunamadı"
+            )
+
+        try:
+            info = validate_document(
+                file_name,
+                content_type,
+                data,
+                max_bytes=MAX_DOCUMENT_BYTES,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        document = SparePartRequestDocumentModel(
+            request_id=request.id,
+            file_name=info["file_name"],
+            content_type=info["content_type"],
+            file_size=info["file_size"],
+            file_data=data,
+            uploaded_by_id=user_id,
+        )
+        self.db.add(document)
+        try:
+            await self.db.commit()
+        except IntegrityError as exc:
+            await self.db.rollback()
+            raise HTTPException(
+                status_code=409, detail="Evrak kaydedilemedi"
+            ) from exc
+        except Exception:
+            await self.db.rollback()
+            raise
+        return await self._get_spare_request(request.id)
+
+    async def get_document(
+        self, request_id: int, document_id: int
+    ) -> SparePartRequestDocumentModel:
+        document = await self.db.get(SparePartRequestDocumentModel, document_id)
+        if document is None or document.request_id != request_id:
+            raise HTTPException(status_code=404, detail="Evrak bulunamadı")
+        return document
+
+    async def delete_document(
+        self, request_id: int, document_id: int
+    ) -> dict[str, Any]:
+        document = await self.get_document(request_id, document_id)
+        await self.db.delete(document)
+        try:
+            await self.db.commit()
+        except Exception:
+            await self.db.rollback()
+            raise
+        return await self._get_spare_request(request_id)
 
     # ---------- SERVICE REQUESTS ----------
 

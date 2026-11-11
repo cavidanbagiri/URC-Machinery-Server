@@ -11,13 +11,23 @@ Every endpoint requires a valid access token; writes also enforce
 from datetime import date
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.setup import get_db
 from dependencies.auth import get_current_user
 from dependencies.permissions import require_write_permission
+from models.purchase_request_model import MAX_DOCUMENT_BYTES
 from models.user_model import UserModel
+from repositories.pdf_documents import content_disposition
 from repositories.purchase_request_repository import (
     PurchaseRequestRepository,
     validate_status_filter,
@@ -165,6 +175,91 @@ async def delete_spare_part_request(
         raise HTTPException(
             status_code=500, detail=f"Yedek parça talebi silinemedi: {e}"
         )
+
+
+# =========================================================
+# SPARE PART DOCUMENTS (PDF)
+# =========================================================
+
+@router.post(
+    "/spare-parts/{request_id}/documents",
+    response_model=SparePartRequestSchema,
+    status_code=201,
+)
+async def upload_spare_part_document(
+    request_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[UserModel, Depends(require_write_permission)],
+    file: Annotated[UploadFile, File(description="PDF evrak")],
+):
+    try:
+        try:
+            # Read one byte past the limit so oversized files are detected
+            # without buffering an unbounded upload in memory.
+            data = await file.read(MAX_DOCUMENT_BYTES + 1)
+        finally:
+            await file.close()
+
+        return await PurchaseRequestRepository(db).add_document(
+            request_id,
+            file_name=file.filename,
+            content_type=file.content_type,
+            data=data,
+            user_id=current_user.id,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Evrak yüklenemedi: {e}")
+
+
+@router.get("/spare-parts/{request_id}/documents/{document_id}")
+async def fetch_spare_part_document(
+    request_id: int,
+    document_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    download: bool = Query(False),
+):
+    """Stream a PDF; ``download=true`` forces the browser save dialog."""
+
+    try:
+        document = await PurchaseRequestRepository(db).get_document(
+            request_id, document_id
+        )
+        return Response(
+            content=document.file_data,
+            media_type=document.content_type or "application/pdf",
+            headers={
+                "Content-Disposition": content_disposition(
+                    document.file_name, download=download
+                ),
+                "Cache-Control": "private, no-store",
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Evrak açılamadı: {e}")
+
+
+@router.delete(
+    "/spare-parts/{request_id}/documents/{document_id}",
+    response_model=SparePartRequestSchema,
+)
+async def delete_spare_part_document(
+    request_id: int,
+    document_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[UserModel, Depends(require_write_permission)],
+):
+    try:
+        return await PurchaseRequestRepository(db).delete_document(
+            request_id, document_id
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Evrak silinemedi: {e}")
 
 
 # =========================================================

@@ -19,6 +19,12 @@ Spare-part status is a two-value state requested by the garage:
 
 ``spare_part_request_types`` is the "Talep Türü" lookup (``Arıza``,
 ``Yedek Bakım``) seeded by the migration and editable through the API.
+
+``spare_part_request_documents`` keeps the paper (signed order, invoice,
+delivery note) of a request. The bytes live in PostgreSQL because the API host
+(Render) has an ephemeral filesystem, so the PDF is validated by
+``repositories/pdf_documents.py`` before it is written — exactly like the daily
+fault and tire documents.
 """
 
 from datetime import date
@@ -30,6 +36,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -47,6 +54,11 @@ STATUS_LABELS = {"geldi": "Geldi", "bekleniyor": "Bekleniyor"}
 
 #: "Birim" values are short free text; the UI offers Ad / LT / MT / KG ...
 MAX_UNIT_LENGTH = 20
+
+#: Hard limit for one uploaded PDF, mirrored by the ``file_size`` check
+#: constraint of ``spare_part_request_documents`` and enforced by the
+#: repository (``repositories/pdf_documents.py``).
+MAX_DOCUMENT_BYTES = 10 * 1024 * 1024
 
 
 def status_label(status: str | None) -> str:
@@ -144,6 +156,13 @@ class SparePartRequestModel(Base):
         passive_deletes=True,
         order_by="SparePartRequestItemModel.id",
     )
+    documents = relationship(
+        "SparePartRequestDocumentModel",
+        back_populates="request",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="SparePartRequestDocumentModel.id",
+    )
 
     def __str__(self) -> str:
         return f"{self.stf_htf_no} - {self.title}"
@@ -197,6 +216,54 @@ class SparePartRequestItemModel(Base):
 
     def __str__(self) -> str:
         return self.part_number or f"Kalem #{self.id}"
+
+
+class SparePartRequestDocumentModel(Base):
+    """A PDF evidence file (signed order, invoice, delivery note) of a request."""
+
+    __tablename__ = "spare_part_request_documents"
+
+    __table_args__ = (
+        CheckConstraint(
+            "file_size > 0",
+            name="ck_spare_part_request_documents_size_positive",
+        ),
+        CheckConstraint(
+            f"file_size <= {MAX_DOCUMENT_BYTES}",
+            name="ck_spare_part_request_documents_size_limit",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    request_id = Column(
+        Integer,
+        ForeignKey("spare_part_requests.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    file_name = Column(String(255), nullable=False)
+    content_type = Column(String(100), nullable=False, default="application/pdf")
+    file_size = Column(Integer, nullable=False)
+    file_data = Column(LargeBinary, nullable=False)
+
+    uploaded_by_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    request = relationship("SparePartRequestModel", back_populates="documents")
+    uploaded_by = relationship("UserModel")
+
+    def __str__(self) -> str:
+        return self.file_name
 
 
 class ServiceRequestModel(Base):
@@ -257,10 +324,12 @@ class ServiceRequestModel(Base):
 
 __all__ = [
     "DEFAULT_SPARE_PART_STATUS",
+    "MAX_DOCUMENT_BYTES",
     "MAX_UNIT_LENGTH",
     "SPARE_PART_STATUSES",
     "STATUS_LABELS",
     "ServiceRequestModel",
+    "SparePartRequestDocumentModel",
     "SparePartRequestItemModel",
     "SparePartRequestModel",
     "SparePartRequestTypeModel",
