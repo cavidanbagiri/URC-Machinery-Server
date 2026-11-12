@@ -7,6 +7,10 @@ or change the machine status, so they are stored separately here.
 
 ``fault_assignment`` and ``changed_parts`` are operator-typed free text and
 ``km_hour`` keeps whatever the operator wrote ("12 450 km", "350 saat", ...).
+``changed_parts`` stays the free-text note ("Değişen Parça" comment) while
+``changed_part_no`` / ``changed_part_quantity`` / ``changed_part_unit`` record
+the structured part ("315/80 R22.5", 2, "Adet"), so the same fault can both
+explain the fix and list the part precisely.
 
 Each fault may own several PDF documents. The bytes live in PostgreSQL because
 the API host (Render) has an ephemeral filesystem; this keeps the papers
@@ -23,6 +27,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     LargeBinary,
+    Numeric,
     String,
     Text,
 )
@@ -35,9 +40,20 @@ from db.base import Base
 #: ``ck_daily_fault_documents_size_limit`` and enforced by the repository).
 MAX_DOCUMENT_BYTES = 10 * 1024 * 1024
 
+#: Structured "Değişen Parça" columns (part number / quantity / unit).
+MAX_CHANGED_PART_NO_LENGTH = 100
+MAX_CHANGED_PART_UNIT_LENGTH = 20
+
 
 class DailyFaultModel(Base):
     __tablename__ = "daily_faults"
+
+    __table_args__ = (
+        CheckConstraint(
+            "changed_part_quantity IS NULL OR changed_part_quantity > 0",
+            name="ck_daily_faults_changed_part_quantity_positive",
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
 
@@ -64,7 +80,13 @@ class DailyFaultModel(Base):
 
     km_hour = Column(String(50), nullable=False)
     fault_assignment = Column(Text, nullable=True)
+    # Free-text note ("Değişen Parça" comment) — kept next to the structured
+    # columns below so old records and quick notes still make sense.
     changed_parts = Column(Text, nullable=True)
+
+    changed_part_no = Column(String(MAX_CHANGED_PART_NO_LENGTH), nullable=True)
+    changed_part_quantity = Column(Numeric(12, 3), nullable=True)
+    changed_part_unit = Column(String(MAX_CHANGED_PART_UNIT_LENGTH), nullable=True)
 
     fault_date = Column(
         Date,
@@ -156,6 +178,8 @@ class DailyFaultDocumentModel(Base):
 
 
 __all__ = [
+    "MAX_CHANGED_PART_NO_LENGTH",
+    "MAX_CHANGED_PART_UNIT_LENGTH",
     "MAX_DOCUMENT_BYTES",
     "DailyFaultModel",
     "DailyFaultDocumentModel",

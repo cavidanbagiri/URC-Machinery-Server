@@ -25,6 +25,9 @@ MAX_TEXT_LENGTH = 500
 MAX_DESCRIPTION_LENGTH = 4000
 MAX_ITEMS = 200
 
+#: What the request is waiting for (see ``SPARE_PART_STATUSES``).
+SparePartStatus = Literal["onay_bekliyor", "odeme_bekliyor", "firma_bekleniyor"]
+
 
 def _clean_required_text(value: str, label: str) -> str:
     value = " ".join((value or "").split())
@@ -50,7 +53,9 @@ def normalize_status(value: str) -> str:
     value = (value or "").strip().lower()
     if value not in SPARE_PART_STATUSES:
         raise ValueError(
-            "Talep durumu yalnızca 'geldi' veya 'bekleniyor' olabilir"
+            "Talep durumu yalnızca "
+            + ", ".join(f"'{status}'" for status in SPARE_PART_STATUSES)
+            + " olabilir"
         )
     return value
 
@@ -100,7 +105,7 @@ class SparePartRequestCreateSchema(BaseModel):
     request_type_id: int = Field(..., gt=0)
     request_date: date
 
-    status: Literal["geldi", "bekleniyor"] = DEFAULT_SPARE_PART_STATUS
+    status: SparePartStatus = DEFAULT_SPARE_PART_STATUS
     items: list[SparePartRequestItemCreateSchema] = Field(
         ..., min_length=1, max_length=MAX_ITEMS
     )
@@ -121,10 +126,37 @@ class SparePartRequestCreateSchema(BaseModel):
         return _lower_text(value)
 
 
+class SparePartRequestItemUpdateSchema(SparePartRequestItemCreateSchema):
+    """A create row plus the id of an existing row.
+
+    ``id`` is sent for the rows that already exist, so editing a request keeps
+    their arrival flags; rows without an id are new, and rows that are not in
+    the payload are deleted.
+    """
+
+    id: Optional[int] = Field(None, gt=0)
+
+
+class SparePartRequestUpdateSchema(SparePartRequestCreateSchema):
+    """Same shape as the create payload; part rows may carry their id."""
+
+    items: list[SparePartRequestItemUpdateSchema] = Field(
+        ..., min_length=1, max_length=MAX_ITEMS
+    )
+
+
+class SparePartItemArrivalUpdateSchema(BaseModel):
+    """The "geldi / gelmedi" flag of one part row of a request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    is_arrived: bool
+
+
 class SparePartStatusUpdateSchema(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    status: Literal["geldi", "bekleniyor"]
+    status: SparePartStatus
 
     @field_validator("status", mode="before")
     @classmethod
@@ -197,6 +229,10 @@ class SparePartRequestItemSchema(BaseModel):
     unit: str = ""
     supply_date: Optional[date] = None
 
+    #: "Geldi mi?" — tracked per row, the header only says what is awaited.
+    is_arrived: bool = False
+    arrived_at: Optional[datetime] = None
+
 
 class SparePartRequestSchema(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -212,12 +248,14 @@ class SparePartRequestSchema(BaseModel):
 
     request_date: date
     status: str = DEFAULT_SPARE_PART_STATUS
-    status_label: str = "Bekleniyor"
+    status_label: str = "Onay Bekliyor"
 
     #: Convenience fields for the table ("ID No" may list several machines).
     machine_ids: list[int] = Field(default_factory=list)
     machine_labels: list[str] = Field(default_factory=list)
     item_count: int = 0
+    #: How many of the ``item_count`` rows are already on site.
+    arrived_count: int = 0
 
     created_by_id: Optional[int] = None
     created_by_name: Optional[str] = None
@@ -290,11 +328,15 @@ __all__ = [
     "RequestTypeOptionSchema",
     "ServiceRequestCreateSchema",
     "ServiceRequestSchema",
+    "SparePartItemArrivalUpdateSchema",
     "SparePartRequestCreateSchema",
     "SparePartRequestDocumentSchema",
     "SparePartRequestItemCreateSchema",
     "SparePartRequestItemSchema",
+    "SparePartRequestItemUpdateSchema",
     "SparePartRequestSchema",
+    "SparePartRequestUpdateSchema",
+    "SparePartStatus",
     "SparePartStatusUpdateSchema",
     "normalize_status",
     "normalize_unit",

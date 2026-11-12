@@ -3,13 +3,20 @@
 
 Daily faults are small on-site interventions (a burst tyre, a loose hose) that
 are finished within the day, so unlike repair records they never change the
-machine status. The form keeps two free-text notes and a hand-typed counter.
+machine status. The form keeps a free-text note plus a structured "Değişen
+Parça" block (part number, quantity, unit) and a hand-typed counter.
 """
 
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from models.daily_fault_model import (
+    MAX_CHANGED_PART_NO_LENGTH,
+    MAX_CHANGED_PART_UNIT_LENGTH,
+)
 
 #: "KM / Saat" is free text, e.g. "12 450 km" or "350 saat".
 MAX_KM_HOUR_LENGTH = 50
@@ -45,14 +52,30 @@ class DailyFaultCreateSchema(BaseModel):
 
     km_hour: str = Field(..., max_length=MAX_KM_HOUR_LENGTH)
     fault_assignment: Optional[str] = Field(None, max_length=MAX_NOTE_LENGTH)
+    # Free-text "Değişen Parça" note, kept alongside the structured columns.
     changed_parts: Optional[str] = Field(None, max_length=MAX_NOTE_LENGTH)
+
+    changed_part_no: Optional[str] = Field(
+        None, max_length=MAX_CHANGED_PART_NO_LENGTH
+    )
+    changed_part_quantity: Optional[Decimal] = Field(
+        None, gt=0, max_digits=12, decimal_places=3
+    )
+    changed_part_unit: Optional[str] = Field(
+        None, max_length=MAX_CHANGED_PART_UNIT_LENGTH
+    )
 
     @field_validator("km_hour")
     @classmethod
     def validate_km_hour(cls, value: str) -> str:
         return normalize_km_hour(value)
 
-    @field_validator("fault_assignment", "changed_parts")
+    @field_validator(
+        "fault_assignment",
+        "changed_parts",
+        "changed_part_no",
+        "changed_part_unit",
+    )
     @classmethod
     def normalize_text(cls, value: Optional[str]) -> Optional[str]:
         return _clean_optional_text(value)
@@ -96,7 +119,11 @@ class DailyFaultItemSchema(BaseModel):
 
     km_hour: str
     fault_assignment: Optional[str] = None
+    # Free-text note plus the structured part ("Parça Numarası / Sayı / Birim").
     changed_parts: Optional[str] = None
+    changed_part_no: Optional[str] = None
+    changed_part_quantity: Optional[float] = None
+    changed_part_unit: Optional[str] = None
 
     fault_date: date
 

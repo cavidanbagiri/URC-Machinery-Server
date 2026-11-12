@@ -64,7 +64,7 @@ class SparePartRequestCreateSchemaTests(unittest.TestCase):
 
         self.assertEqual(parsed.title, "Şanzıman yedek parça talebi")
         self.assertEqual(parsed.stf_htf_no, "STF-2026-14")
-        self.assertEqual(parsed.status, "bekleniyor")
+        self.assertEqual(parsed.status, "onay_bekliyor")
         self.assertEqual(parsed.request_date, date(2026, 10, 31))
 
         row = parsed.items[0]
@@ -107,13 +107,19 @@ class SparePartRequestCreateSchemaTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             SparePartRequestCreateSchema(**payload(items=[item(unit="  ")]))
 
-    def test_status_accepts_only_two_values(self):
-        self.assertEqual(
-            SparePartRequestCreateSchema(**payload(status="geldi")).status,
-            "geldi",
-        )
-        with self.assertRaises(ValidationError):
-            SparePartRequestCreateSchema(**payload(status="tamirde"))
+    def test_status_accepts_only_the_three_waiting_states(self):
+        for status in ("onay_bekliyor", "odeme_bekliyor", "firma_bekleniyor"):
+            with self.subTest(status=status):
+                self.assertEqual(
+                    SparePartRequestCreateSchema(**payload(status=status)).status,
+                    status,
+                )
+
+        # "geldi" was the old two-value state; arrival is per row now.
+        for status in ("geldi", "bekleniyor", "tamirde"):
+            with self.subTest(status=status):
+                with self.assertRaises(ValidationError):
+                    SparePartRequestCreateSchema(**payload(status=status))
 
     def test_ids_must_be_positive(self):
         with self.assertRaises(ValidationError):
@@ -133,12 +139,15 @@ class SparePartRequestCreateSchemaTests(unittest.TestCase):
 class StatusSchemaTests(unittest.TestCase):
     def test_trims_and_lowercases(self):
         self.assertEqual(
-            SparePartStatusUpdateSchema(status=" GELDI ").status, "geldi"
+            SparePartStatusUpdateSchema(status=" ONAY_BEKLIYOR ").status,
+            "onay_bekliyor",
         )
 
     def test_rejects_unknown_status(self):
-        with self.assertRaises(ValidationError):
-            SparePartStatusUpdateSchema(status="iptal")
+        for status in ("iptal", "geldi"):
+            with self.subTest(status=status):
+                with self.assertRaises(ValidationError):
+                    SparePartStatusUpdateSchema(status=status)
 
 
 class ServiceRequestCreateSchemaTests(unittest.TestCase):
@@ -208,14 +217,21 @@ class RepositoryHelperTests(unittest.TestCase):
     def test_validate_status_filter(self):
         self.assertIsNone(validate_status_filter(None))
         self.assertIsNone(validate_status_filter("  "))
-        self.assertEqual(validate_status_filter(" GELDI "), "geldi")
-        with self.assertRaises(HTTPException) as ctx:
-            validate_status_filter("tamirde")
-        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertEqual(
+            validate_status_filter(" Firma_Bekleniyor "), "firma_bekleniyor"
+        )
+        for unknown in ("tamirde", "geldi", "bekleniyor"):
+            with self.subTest(status=unknown):
+                with self.assertRaises(HTTPException) as ctx:
+                    validate_status_filter(unknown)
+                self.assertEqual(ctx.exception.status_code, 400)
 
     def test_status_label_is_turkish_and_falls_back(self):
-        self.assertEqual(status_label("geldi"), "Geldi")
-        self.assertEqual(status_label("bekleniyor"), "Bekleniyor")
+        self.assertEqual(status_label("onay_bekliyor"), "Onay Bekliyor")
+        self.assertEqual(status_label("odeme_bekliyor"), "Ödeme Bekliyor")
+        self.assertEqual(
+            status_label("firma_bekleniyor"), "Firmadan Gelmesi Bekleniyor"
+        )
         self.assertEqual(status_label(None), "Bekleniyor")
 
 
@@ -334,7 +350,7 @@ class SparePartDocumentTests(unittest.TestCase):
     def test_request_schema_serializes_documents(self):
         from schemas.purchase_request_schemas import SparePartRequestSchema
 
-        data = payload(status="bekleniyor")
+        data = payload(status="odeme_bekliyor")
         data.pop("items")
         data["id"] = 9
         documents = [
@@ -388,6 +404,160 @@ class SparePartDocumentTests(unittest.TestCase):
         self.assertIn("/spare-parts/{request_id}/documents", paths)
         self.assertIn(
             "/spare-parts/{request_id}/documents/{document_id}", paths
+        )
+
+
+class SparePartRequestUpdateSchemaTests(unittest.TestCase):
+    """Editing a saved request and ticking the arrival of single rows."""
+
+    def test_item_ids_are_optional(self):
+        from schemas.purchase_request_schemas import SparePartRequestUpdateSchema
+
+        parsed = SparePartRequestUpdateSchema(
+            **payload(
+                items=[item(id=7), item(machine_id=13, part_number="6CT-002")]
+            )
+        )
+
+        self.assertEqual(parsed.items[0].id, 7)
+        self.assertIsNone(parsed.items[1].id)
+
+    def test_item_id_must_be_positive(self):
+        from schemas.purchase_request_schemas import SparePartRequestUpdateSchema
+
+        with self.assertRaises(ValidationError):
+            SparePartRequestUpdateSchema(**payload(items=[item(id=0)]))
+
+    def test_rows_still_reject_unknown_fields(self):
+        from schemas.purchase_request_schemas import SparePartRequestUpdateSchema
+
+        with self.assertRaises(ValidationError):
+            SparePartRequestUpdateSchema(
+                **payload(items=[item(id=7, is_arrived=True)])
+            )
+
+    def test_items_are_required(self):
+        from schemas.purchase_request_schemas import SparePartRequestUpdateSchema
+
+        with self.assertRaises(ValidationError):
+            SparePartRequestUpdateSchema(**payload(items=[]))
+
+    def test_status_still_accepts_the_three_states(self):
+        from schemas.purchase_request_schemas import SparePartRequestUpdateSchema
+
+        parsed = SparePartRequestUpdateSchema(**payload(status="Firma_Bekleniyor"))
+        self.assertEqual(parsed.status, "firma_bekleniyor")
+
+
+class SparePartItemArrivalSchemaTests(unittest.TestCase):
+    def test_accepts_the_flag(self):
+        from schemas.purchase_request_schemas import (
+            SparePartItemArrivalUpdateSchema,
+        )
+
+        self.assertTrue(
+            SparePartItemArrivalUpdateSchema(is_arrived=True).is_arrived
+        )
+        self.assertFalse(
+            SparePartItemArrivalUpdateSchema(is_arrived=False).is_arrived
+        )
+
+    def test_flag_is_required_and_extra_fields_are_rejected(self):
+        from schemas.purchase_request_schemas import (
+            SparePartItemArrivalUpdateSchema,
+        )
+
+        with self.assertRaises(ValidationError):
+            SparePartItemArrivalUpdateSchema()
+        with self.assertRaises(ValidationError):
+            SparePartItemArrivalUpdateSchema(is_arrived=True, arrived_at="now")
+
+
+class ArrivalModelTests(unittest.TestCase):
+    def test_item_rows_carry_the_arrival_flag(self):
+        from models.purchase_request_model import SparePartRequestItemModel
+
+        columns = SparePartRequestItemModel.__table__.columns
+
+        self.assertFalse(columns["is_arrived"].nullable)
+        self.assertEqual(str(columns["is_arrived"].server_default.arg), "false")
+        self.assertTrue(columns["arrived_at"].nullable)
+
+    def test_status_check_lists_the_three_states(self):
+        from models.purchase_request_model import (
+            SPARE_PART_STATUSES,
+            SparePartRequestModel,
+        )
+
+        self.assertEqual(
+            SPARE_PART_STATUSES,
+            ("onay_bekliyor", "odeme_bekliyor", "firma_bekleniyor"),
+        )
+
+        constraints = {
+            constraint.name: str(constraint.sqltext)
+            for constraint in SparePartRequestModel.__table__.constraints
+            if constraint.name
+        }
+        self.assertEqual(
+            constraints["ck_spare_part_requests_status"],
+            "status IN ('onay_bekliyor', 'odeme_bekliyor', 'firma_bekleniyor')",
+        )
+
+    def test_read_schema_defaults(self):
+        from schemas.purchase_request_schemas import (
+            SparePartRequestItemSchema,
+            SparePartRequestSchema,
+        )
+
+        item_schema = SparePartRequestItemSchema(
+            id=1, machine_id=2, quantity=3, unit="Adet"
+        )
+        self.assertFalse(item_schema.is_arrived)
+        self.assertIsNone(item_schema.arrived_at)
+
+        data = payload()
+        data.pop("items")
+        data["id"] = 9
+        request_schema = SparePartRequestSchema(**data)
+        self.assertEqual(request_schema.arrived_count, 0)
+        self.assertEqual(request_schema.status_label, "Onay Bekliyor")
+
+    def test_repository_exposes_update_and_arrival_methods(self):
+        from inspect import signature
+
+        from repositories.purchase_request_repository import (
+            PurchaseRequestRepository,
+        )
+
+        update_params = signature(
+            PurchaseRequestRepository.update_spare_part_request
+        ).parameters
+        self.assertEqual(
+            list(update_params)[:3], ["self", "request_id", "data"]
+        )
+
+        arrival_params = signature(
+            PurchaseRequestRepository.set_item_arrival
+        ).parameters
+        self.assertEqual(
+            list(arrival_params)[:4],
+            ["self", "request_id", "item_id", "is_arrived"],
+        )
+
+    def test_router_registers_update_and_arrival_endpoints(self):
+        from routers.purchase_request_router import router
+
+        routes = {
+            (route.path, tuple(sorted(route.methods)))
+            for route in router.routes
+            if getattr(route, "methods", None)
+        }
+
+        self.assertIn(("/spare-parts/{request_id}", ("PUT",)), routes)
+        self.assertIn(
+            ("/spare-parts/{request_id}/items/{item_id}/arrival", ("PATCH",)),
+            routes,
         )
 
 

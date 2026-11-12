@@ -45,9 +45,6 @@ from schemas.warehouse_schemas import (
 DEFAULT_LIMIT = 20
 MAX_LIMIT = 100
 
-#: Request status that allows the warehouse to take the part into stock.
-ARRIVED_STATUS = "geldi"
-
 
 # =========================================================
 # PURE HELPERS (unit tested without a database)
@@ -693,8 +690,10 @@ class WarehouseRepository:
         )
 
     def _pending_conditions(self, search: Optional[str]) -> list:
+        # The arrival is ticked per row on the purchase side, so a request can
+        # be partially delivered: only its arrived rows show up here.
         conditions = [
-            SparePartRequestModel.status == ARRIVED_STATUS,
+            SparePartRequestItemModel.is_arrived.is_(True),
             ~self._received_exists(),
         ]
 
@@ -779,7 +778,7 @@ class WarehouseRepository:
         offset: int = 0,
         search: Optional[str] = None,
     ) -> dict[str, Any]:
-        """Arrived ("geldi") spare-part rows that are not in stock yet."""
+        """Arrived ("geldi" ticked) part rows that are not in stock yet."""
 
         limit, offset = clamp_pagination(limit, offset)
         conditions = self._pending_conditions(search)
@@ -925,12 +924,14 @@ class WarehouseRepository:
         for line in data.items:
             item, request = rows[line.request_item_id]
 
-            if request.status != ARRIVED_STATUS:
+            if not item.is_arrived:
                 raise HTTPException(
                     status_code=400,
                     detail=(
-                        f"'{request.stf_htf_no}' talebi 'Geldi' durumunda "
-                        "değil; önce satın alma tarafından işaretlenmeli"
+                        f"'{request.stf_htf_no}' talebindeki "
+                        f"'{item.part_number or f'Kalem #{item.id}'}' kalemi "
+                        "'Geldi' olarak işaretlenmemiş; önce satın alma "
+                        "tarafından işaretlenmeli"
                     ),
                 )
 
@@ -1020,7 +1021,7 @@ class WarehouseRepository:
                     == SparePartRequestModel.id,
                 )
                 .where(
-                    SparePartRequestModel.status == ARRIVED_STATUS,
+                    SparePartRequestItemModel.is_arrived.is_(True),
                     ~self._received_exists(),
                 )
             )

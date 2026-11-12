@@ -4,7 +4,9 @@
 The flow implemented here completes the purchasing module:
 
 1. The garage opens a spare-part request (``spare_part_requests``) and the
-   purchasing side flips it to ``geldi`` when the material arrives.
+   purchasing side ticks "geldi" on each delivered row
+   (``spare_part_request_items.is_arrived``) — the header status only says what
+   the request is waiting for (approval / payment / delivery).
 2. The warehouse takes those arrived rows into stock: one ``giris`` movement per
    ``spare_part_request_items`` row, linked through ``source_request_item_id`` so
    the same row can never be received twice.

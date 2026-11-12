@@ -99,6 +99,13 @@ class DailyFaultRepository:
             "km_hour": fault.km_hour,
             "fault_assignment": fault.fault_assignment,
             "changed_parts": fault.changed_parts,
+            "changed_part_no": fault.changed_part_no,
+            "changed_part_quantity": (
+                float(fault.changed_part_quantity)
+                if fault.changed_part_quantity is not None
+                else None
+            ),
+            "changed_part_unit": fault.changed_part_unit,
             "fault_date": fault.fault_date,
             "created_by_id": fault.created_by_id,
             "created_by_name": creator_name or None,
@@ -192,6 +199,7 @@ class DailyFaultRepository:
                     DailyFaultModel.km_hour.ilike(pattern),
                     DailyFaultModel.fault_assignment.ilike(pattern),
                     DailyFaultModel.changed_parts.ilike(pattern),
+                    DailyFaultModel.changed_part_no.ilike(pattern),
                     TerritoryModel.name.ilike(pattern),
                     RepairTypeModel.name.ilike(pattern),
                 )
@@ -324,6 +332,9 @@ class DailyFaultRepository:
             km_hour=normalize_km_hour(data.km_hour),
             fault_assignment=data.fault_assignment,
             changed_parts=data.changed_parts,
+            changed_part_no=data.changed_part_no,
+            changed_part_quantity=data.changed_part_quantity,
+            changed_part_unit=data.changed_part_unit,
             fault_date=date.today(),
             created_by_id=user_id,
         )

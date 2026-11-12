@@ -14,8 +14,12 @@ Two independent flows share one page:
     A service/repair job done by an outside company for exactly one machine
     (service form no, company, description, date).
 
-Spare-part status is a two-value state requested by the garage:
-``bekleniyor`` (waiting) and ``geldi`` (arrived).
+The spare-part header status says what the request is **waiting for** and is
+picked by the user when the request is created: ``onay_bekliyor`` (approval),
+``odeme_bekliyor`` (payment) or ``firma_bekleniyor`` (delivery of the firm).
+Whether a part physically arrived is *not* a header state: every requested row
+carries its own ``is_arrived`` flag (``arrived_at`` keeps the moment), so one
+order with six parts can have three arrived and three still on the way.
 
 ``spare_part_request_types`` is the "Talep Türü" lookup (``Arıza``,
 ``Yedek Bakım``) seeded by the migration and editable through the API.
@@ -30,6 +34,7 @@ fault and tire documents.
 from datetime import date
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Column,
     Date,
@@ -40,6 +45,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    text,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -48,9 +54,14 @@ from db.base import Base
 
 #: Allowed ``spare_part_requests.status`` values (mirrored by the check
 #: constraint ``ck_spare_part_requests_status`` and the pydantic ``Literal``).
-SPARE_PART_STATUSES = ("geldi", "bekleniyor")
-DEFAULT_SPARE_PART_STATUS = "bekleniyor"
-STATUS_LABELS = {"geldi": "Geldi", "bekleniyor": "Bekleniyor"}
+#: The order is the one the form offers: approval, payment, delivery.
+SPARE_PART_STATUSES = ("onay_bekliyor", "odeme_bekliyor", "firma_bekleniyor")
+DEFAULT_SPARE_PART_STATUS = "onay_bekliyor"
+STATUS_LABELS = {
+    "onay_bekliyor": "Onay Bekliyor",
+    "odeme_bekliyor": "Ödeme Bekliyor",
+    "firma_bekleniyor": "Firmadan Gelmesi Bekleniyor",
+}
 
 #: "Birim" values are short free text; the UI offers Ad / LT / MT / KG ...
 MAX_UNIT_LENGTH = 20
@@ -88,7 +99,7 @@ class SparePartRequestModel(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "status IN ('geldi', 'bekleniyor')",
+            "status IN ('onay_bekliyor', 'odeme_bekliyor', 'firma_bekleniyor')",
             name="ck_spare_part_requests_status",
         ),
     )
@@ -119,6 +130,9 @@ class SparePartRequestModel(Base):
         server_default=func.current_date(),
         index=True,
     )
+    #: "Neyi bekliyoruz?" — the status the user picks for the request
+    #: (approval / payment / delivery of the firm). The arrival of the parts is
+    #: tracked per row, see ``SparePartRequestItemModel.is_arrived``.
     status = Column(
         String(20),
         nullable=False,
@@ -202,6 +216,18 @@ class SparePartRequestItemModel(Base):
     quantity = Column(Numeric(12, 3), nullable=False)
     unit = Column(String(MAX_UNIT_LENGTH), nullable=False)
     supply_date = Column(Date, nullable=True)
+
+    #: "Geldi mi?" — the arrival is per row, so a request with six parts can
+    #: have three arrived and three still on the way. ``arrived_at`` keeps the
+    #: moment the row was ticked (cleared when the tick is removed).
+    is_arrived = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+        index=True,
+    )
+    arrived_at = Column(DateTime(timezone=True), nullable=True)
 
     created_at = Column(
         DateTime(timezone=True),

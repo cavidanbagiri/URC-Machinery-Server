@@ -39,8 +39,10 @@ from schemas.purchase_request_schemas import (
     RequestTypeOptionSchema,
     ServiceRequestCreateSchema,
     ServiceRequestSchema,
+    SparePartItemArrivalUpdateSchema,
     SparePartRequestCreateSchema,
     SparePartRequestSchema,
+    SparePartRequestUpdateSchema,
     SparePartStatusUpdateSchema,
 )
 
@@ -158,6 +160,50 @@ async def update_spare_part_status(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Durum güncellenemedi: {e}")
+
+
+@router.put("/spare-parts/{request_id}", response_model=SparePartRequestSchema)
+async def update_spare_part_request(
+    request_id: int,
+    data: SparePartRequestUpdateSchema,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[UserModel, Depends(require_write_permission)],
+):
+    try:
+        return await PurchaseRequestRepository(db).update_spare_part_request(
+            request_id, data
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Yedek parça talebi güncellenemedi: {e}"
+        )
+
+
+@router.patch(
+    "/spare-parts/{request_id}/items/{item_id}/arrival",
+    response_model=SparePartRequestSchema,
+)
+async def update_spare_part_item_arrival(
+    request_id: int,
+    item_id: int,
+    data: SparePartItemArrivalUpdateSchema,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[UserModel, Depends(require_write_permission)],
+):
+    """Toggle "geldi / gelmedi" of one part row; the whole request comes back."""
+
+    try:
+        return await PurchaseRequestRepository(db).set_item_arrival(
+            request_id, item_id, data.is_arrived
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Kalem durumu güncellenemedi: {e}"
+        )
 
 
 @router.delete("/spare-parts/{request_id}", status_code=204)

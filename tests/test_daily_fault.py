@@ -8,6 +8,7 @@ guard rails and the Content-Disposition header used when a paper is opened.
 """
 
 import unittest
+from decimal import Decimal
 
 from pydantic import ValidationError
 
@@ -18,7 +19,11 @@ from repositories.daily_fault_repository import (
     sanitize_file_name,
     validate_document,
 )
-from schemas.daily_fault_schemas import DailyFaultCreateSchema, normalize_km_hour
+from schemas.daily_fault_schemas import (
+    DailyFaultCreateSchema,
+    DailyFaultItemSchema,
+    normalize_km_hour,
+)
 
 
 PDF_BYTES = b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
@@ -67,6 +72,67 @@ class DailyFaultCreateSchemaTests(unittest.TestCase):
     def test_unknown_fields_are_rejected(self):
         with self.assertRaises(ValidationError):
             DailyFaultCreateSchema(**payload(status="tamirde"))
+
+    def test_structured_changed_part_is_parsed(self):
+        parsed = DailyFaultCreateSchema(
+            **payload(
+                changed_parts="  Lastik değişti  ",
+                changed_part_no="  315/80 R22.5 ",
+                changed_part_quantity="3.2",
+                changed_part_unit=" Adet ",
+            )
+        )
+        self.assertEqual(parsed.changed_parts, "Lastik değişti")
+        self.assertEqual(parsed.changed_part_no, "315/80 R22.5")
+        self.assertEqual(parsed.changed_part_quantity, Decimal("3.2"))
+        self.assertEqual(parsed.changed_part_unit, "Adet")
+
+    def test_structured_changed_part_is_optional(self):
+        """Old clients send the note only; the three new fields stay null."""
+        parsed = DailyFaultCreateSchema(**payload())
+        self.assertIsNone(parsed.changed_part_no)
+        self.assertIsNone(parsed.changed_part_quantity)
+        self.assertIsNone(parsed.changed_part_unit)
+
+    def test_blank_structured_part_becomes_null(self):
+        parsed = DailyFaultCreateSchema(
+            **payload(changed_part_no="   ", changed_part_unit="")
+        )
+        self.assertIsNone(parsed.changed_part_no)
+        self.assertIsNone(parsed.changed_part_unit)
+
+    def test_changed_part_quantity_must_be_positive(self):
+        with self.assertRaises(ValidationError):
+            DailyFaultCreateSchema(**payload(changed_part_quantity=0))
+        with self.assertRaises(ValidationError):
+            DailyFaultCreateSchema(**payload(changed_part_quantity="-2"))
+
+    def test_changed_part_lengths_are_limited(self):
+        with self.assertRaises(ValidationError):
+            DailyFaultCreateSchema(**payload(changed_part_no="x" * 101))
+        with self.assertRaises(ValidationError):
+            DailyFaultCreateSchema(**payload(changed_part_unit="x" * 21))
+
+
+class DailyFaultItemSchemaTests(unittest.TestCase):
+    def test_quantity_is_serialized_as_a_number(self):
+        item = DailyFaultItemSchema(
+            **{
+                "id": 1,
+                "machine_id": 7,
+                "territory_id": 2,
+                "repair_type_id": 3,
+                "km_hour": "350 saat",
+                "changed_part_no": "315/80 R22.5",
+                "changed_part_quantity": 2.5,
+                "changed_part_unit": "Adet",
+                "fault_date": "2026-11-12",
+            }
+        )
+        dumped = item.model_dump()
+        self.assertEqual(dumped["changed_part_no"], "315/80 R22.5")
+        self.assertEqual(dumped["changed_part_quantity"], 2.5)
+        self.assertEqual(dumped["changed_part_unit"], "Adet")
 
 
 class KmHourHelperTests(unittest.TestCase):

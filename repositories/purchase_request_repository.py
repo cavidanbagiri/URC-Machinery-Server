@@ -1,6 +1,7 @@
 # repositories/purchase_request_repository.py
 """Database access for spare-part and service purchase requests."""
 
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import HTTPException
@@ -20,10 +21,12 @@ from models.purchase_request_model import (
     status_label,
 )
 from models.user_model import UserModel
+from models.warehouse_model import WarehouseMovementModel
 from repositories.pdf_documents import validate_document
 from schemas.purchase_request_schemas import (
     ServiceRequestCreateSchema,
     SparePartRequestCreateSchema,
+    SparePartRequestUpdateSchema,
 )
 
 DEFAULT_LIMIT = 20
@@ -75,7 +78,11 @@ def validate_status_filter(status: Optional[str]) -> Optional[str]:
     if status not in SPARE_PART_STATUSES:
         raise HTTPException(
             status_code=400,
-            detail="Talep durumu yalnızca 'geldi' veya 'bekleniyor' olabilir",
+            detail=(
+                "Talep durumu yalnızca "
+                + ", ".join(f"'{value}'" for value in SPARE_PART_STATUSES)
+                + " olabilir"
+            ),
         )
     return status
 
@@ -102,6 +109,25 @@ class PurchaseRequestRepository:
         if obj is None:
             raise HTTPException(status_code=404, detail=message)
         return obj
+
+    async def _require_machines(self, machine_ids: list[int]) -> None:
+        """Every part row must point at a machine that still exists."""
+
+        if not machine_ids:
+            return
+        result = await self.db.execute(
+            select(AllMachineModel.id).where(AllMachineModel.id.in_(machine_ids))
+        )
+        found = set(result.scalars().all())
+        missing = [
+            machine_id for machine_id in machine_ids if machine_id not in found
+        ]
+        if missing:
+            raise HTTPException(
+                status_code=404,
+                detail="Makine bulunamadı: "
+                + ", ".join(str(machine_id) for machine_id in missing),
+            )
 
     # ---------- SPARE PART REQUESTS ----------
 
@@ -266,6 +292,8 @@ class PurchaseRequestRepository:
                     "quantity": float(item.quantity or 0),
                     "unit": item.unit,
                     "supply_date": item.supply_date,
+                    "is_arrived": bool(item.is_arrived),
+                    "arrived_at": item.arrived_at,
                 }
             )
         return grouped
@@ -336,6 +364,7 @@ class PurchaseRequestRepository:
             "machine_ids": machine_ids,
             "machine_labels": machine_labels,
             "item_count": len(items),
+            "arrived_count": sum(1 for item in items if item.get("is_arrived")),
             "created_by_id": request.created_by_id,
             "created_by_name": self._creator_name(
                 row.creator_firstname, row.creator_lastname
@@ -459,19 +488,7 @@ class PurchaseRequestRepository:
         )
 
         machine_ids = sorted({item.machine_id for item in data.items})
-        result = await self.db.execute(
-            select(AllMachineModel.id).where(AllMachineModel.id.in_(machine_ids))
-        )
-        found = set(result.scalars().all())
-        missing = [
-            machine_id for machine_id in machine_ids if machine_id not in found
-        ]
-        if missing:
-            raise HTTPException(
-                status_code=404,
-                detail="Makine bulunamadı: "
-                + ", ".join(str(machine_id) for machine_id in missing),
-            )
+        await self._require_machines(machine_ids)
 
         request = SparePartRequestModel(
             title=data.title,
@@ -519,6 +536,144 @@ class PurchaseRequestRepository:
                 status_code=404, detail="Yedek parça talebi bulunamadı"
             )
         request.status = status
+        try:
+            await self.db.commit()
+        except Exception:
+            await self.db.rollback()
+            raise
+        return await self._get_spare_request(request_id)
+
+    async def update_spare_part_request(
+        self, request_id: int, data: SparePartRequestUpdateSchema
+    ) -> dict[str, Any]:
+        """Rewrite the header and reconcile the part rows.
+
+        Rows that carry an ``id`` are updated in place, so their "geldi" flag
+        survives the edit. Rows without an id are appended and rows that are no
+        longer in the payload are deleted — unless the warehouse already took
+        them into stock, because then the ledger must stay traceable.
+        """
+
+        request = await self._require(
+            SparePartRequestModel, request_id, "Yedek parça talebi bulunamadı"
+        )
+        await self._require(
+            TerritoryModel, data.territory_id, "Şantiye bulunamadı"
+        )
+        await self._require(
+            SparePartRequestTypeModel,
+            data.request_type_id,
+            "Talep türü bulunamadı",
+        )
+        await self._require_machines(
+            sorted({item.machine_id for item in data.items})
+        )
+
+        result = await self.db.execute(
+            select(SparePartRequestItemModel).where(
+                SparePartRequestItemModel.request_id == request_id
+            )
+        )
+        existing = {item.id: item for item in result.scalars().all()}
+
+        unknown = [
+            row_id
+            for row_id in (item.id for item in data.items)
+            if row_id is not None and row_id not in existing
+        ]
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail="Talep kalemi bu talebe ait değil: "
+                + ", ".join(str(row_id) for row_id in unknown),
+            )
+
+        request.title = data.title
+        request.stf_htf_no = data.stf_htf_no
+        request.territory_id = data.territory_id
+        request.request_type_id = data.request_type_id
+        request.request_date = data.request_date
+        request.status = data.status
+
+        kept: set[int] = set()
+        for row in data.items:
+            item = existing.get(row.id) if row.id else None
+            if item is None:
+                item = SparePartRequestItemModel(request_id=request_id)
+                self.db.add(item)
+            else:
+                kept.add(item.id)
+
+            item.machine_id = row.machine_id
+            item.garage_request_no = row.garage_request_no
+            item.part_number = row.part_number
+            item.description_ru = row.description_ru
+            item.description_tr = row.description_tr
+            item.quantity = row.quantity
+            item.unit = row.unit
+            item.supply_date = row.supply_date
+
+        removed = [
+            item for item_id, item in existing.items() if item_id not in kept
+        ]
+        if removed:
+            await self._ensure_not_received([item.id for item in removed])
+            for item in removed:
+                await self.db.delete(item)
+
+        try:
+            await self.db.commit()
+        except IntegrityError as exc:
+            await self.db.rollback()
+            raise HTTPException(
+                status_code=409, detail="Yedek parça talebi güncellenemedi"
+            ) from exc
+        except Exception:
+            await self.db.rollback()
+            raise
+        return await self._get_spare_request(request_id)
+
+    async def _ensure_not_received(self, item_ids: list[int]) -> None:
+        """Refuse deleting rows the warehouse already booked in."""
+
+        if not item_ids:
+            return
+        result = await self.db.execute(
+            select(WarehouseMovementModel.source_request_item_id).where(
+                WarehouseMovementModel.source_request_item_id.in_(item_ids)
+            )
+        )
+        received = [str(value) for value in result.scalars().all() if value]
+        if received:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Depoya alınmış kalemler silinemez: "
+                    + ", ".join(received)
+                ),
+            )
+
+    async def set_item_arrival(
+        self, request_id: int, item_id: int, is_arrived: bool
+    ) -> dict[str, Any]:
+        """Mark one row as arrived (or undo it) and return the whole request.
+
+        The list is refreshed from the response, so the row summary
+        (``arrived_count``) and the sub-table stay in sync.
+        """
+
+        result = await self.db.execute(
+            select(SparePartRequestItemModel).where(
+                SparePartRequestItemModel.id == item_id,
+                SparePartRequestItemModel.request_id == request_id,
+            )
+        )
+        item = result.scalar_one_or_none()
+        if item is None:
+            raise HTTPException(status_code=404, detail="Talep kalemi bulunamadı")
+
+        item.is_arrived = bool(is_arrived)
+        item.arrived_at = datetime.now(timezone.utc) if is_arrived else None
         try:
             await self.db.commit()
         except Exception:
