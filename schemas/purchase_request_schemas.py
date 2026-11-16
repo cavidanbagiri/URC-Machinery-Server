@@ -10,7 +10,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from models.purchase_request_model import (
     DEFAULT_SPARE_PART_STATUS,
@@ -23,6 +23,7 @@ MAX_TITLE_LENGTH = 255
 MAX_REQUEST_NO_LENGTH = 100
 MAX_TEXT_LENGTH = 500
 MAX_DESCRIPTION_LENGTH = 4000
+MAX_MACHINE_NO_LENGTH = 255
 MAX_ITEMS = 200
 
 #: What the request is waiting for (see ``SPARE_PART_STATUSES``).
@@ -73,7 +74,12 @@ def _lower_text(value: Any) -> Any:
 class SparePartRequestItemCreateSchema(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    machine_id: int = Field(..., gt=0)
+    #: ``machine_id`` is set only when the row points at a machine picked from
+    #: the list. ``machine_no`` is the "Makine ID No" typed by hand — the same
+    #: part often goes to several machines ("1042, 1043"), so the numbers are
+    #: kept as written and no row has to choose one single machine.
+    machine_id: Optional[int] = Field(None, gt=0)
+    machine_no: Optional[str] = Field(None, max_length=MAX_MACHINE_NO_LENGTH)
 
     garage_request_no: Optional[str] = Field(None, max_length=MAX_REQUEST_NO_LENGTH)
     part_number: Optional[str] = Field(None, max_length=MAX_REQUEST_NO_LENGTH)
@@ -84,7 +90,13 @@ class SparePartRequestItemCreateSchema(BaseModel):
     unit: str = Field(..., max_length=MAX_UNIT_LENGTH)
     supply_date: Optional[date] = None
 
-    @field_validator("garage_request_no", "part_number", "description_ru", "description_tr")
+    @field_validator(
+        "machine_no",
+        "garage_request_no",
+        "part_number",
+        "description_ru",
+        "description_tr",
+    )
     @classmethod
     def normalize_optional(cls, value: Optional[str]) -> Optional[str]:
         return _clean_optional_text(value)
@@ -93,6 +105,14 @@ class SparePartRequestItemCreateSchema(BaseModel):
     @classmethod
     def validate_unit(cls, value: str) -> str:
         return normalize_unit(value)
+
+    @model_validator(mode="after")
+    def require_machine_reference(self):
+        """A part row must say which machine(s) it is requested for."""
+
+        if not self.machine_id and not self.machine_no:
+            raise ValueError("Makine ID No zorunludur")
+        return self
 
 
 class SparePartRequestCreateSchema(BaseModel):
@@ -216,7 +236,11 @@ class SparePartRequestItemSchema(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    machine_id: int
+    #: ``machine_id`` is the optionally picked machine; ``machine_no`` is the
+    #: "Makine ID No" typed by hand ("1042, 1043"), which is what the table
+    #: shows for the rows that cover several machines.
+    machine_id: Optional[int] = None
+    machine_no: Optional[str] = None
     identification_no: Optional[str] = None
     plate_no: Optional[str] = None
     vin_no: Optional[str] = None

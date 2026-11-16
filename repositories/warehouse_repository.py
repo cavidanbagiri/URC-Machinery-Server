@@ -683,7 +683,7 @@ class WarehouseRepository:
                 SparePartRequestModel.request_type_id
                 == SparePartRequestTypeModel.id,
             )
-            .join(
+            .outerjoin(
                 AllMachineModel,
                 SparePartRequestItemModel.machine_id == AllMachineModel.id,
             )
@@ -707,6 +707,7 @@ class WarehouseRepository:
                     SparePartRequestItemModel.description_tr.ilike(pattern),
                     SparePartRequestItemModel.description_ru.ilike(pattern),
                     SparePartRequestItemModel.garage_request_no.ilike(pattern),
+                    SparePartRequestItemModel.machine_no.ilike(pattern),
                     AllMachineModel.identification_no.ilike(pattern),
                     AllMachineModel.plate_no.ilike(pattern),
                     AllMachineModel.vin_no.ilike(pattern),
@@ -756,7 +757,8 @@ class WarehouseRepository:
             "territory_name": row.territory_name,
             "request_type_name": row.request_type_name,
             "machine_id": item.machine_id,
-            "machine_label": machine_label(
+            "machine_label": (item.machine_no or "").strip()
+            or machine_label(
                 row.identification_no, row.plate_no, row.vin_no, item.machine_id
             ),
             "garage_request_no": item.garage_request_no,
@@ -790,7 +792,7 @@ class WarehouseRepository:
                 SparePartRequestModel,
                 SparePartRequestItemModel.request_id == SparePartRequestModel.id,
             )
-            .join(
+            .outerjoin(
                 AllMachineModel,
                 SparePartRequestItemModel.machine_id == AllMachineModel.id,
             )

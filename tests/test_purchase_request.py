@@ -93,6 +93,31 @@ class SparePartRequestCreateSchemaTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             SparePartRequestCreateSchema(**payload(items=[]))
 
+    def test_a_row_may_cover_several_machines_typed_by_hand(self):
+        parsed = SparePartRequestCreateSchema(
+            **payload(items=[item(machine_id=None, machine_no=" 1042, 1043 ")])
+        )
+
+        row = parsed.items[0]
+        self.assertIsNone(row.machine_id)
+        self.assertEqual(row.machine_no, "1042, 1043")
+
+    def test_a_row_needs_a_machine_number(self):
+        with self.assertRaises(ValidationError):
+            SparePartRequestCreateSchema(
+                **payload(items=[item(machine_id=None, machine_no="   ")])
+            )
+        with self.assertRaises(ValidationError):
+            SparePartRequestCreateSchema(
+                **payload(items=[item(machine_id=None, machine_no=None)])
+            )
+
+    def test_typed_machine_numbers_are_limited(self):
+        with self.assertRaises(ValidationError):
+            SparePartRequestCreateSchema(
+                **payload(items=[item(machine_id=None, machine_no="1" * 256)])
+            )
+
     def test_blank_header_fields_are_rejected(self):
         with self.assertRaises(ValidationError):
             SparePartRequestCreateSchema(**payload(title="   "))
@@ -482,6 +507,17 @@ class ArrivalModelTests(unittest.TestCase):
         self.assertFalse(columns["is_arrived"].nullable)
         self.assertEqual(str(columns["is_arrived"].server_default.arg), "false")
         self.assertTrue(columns["arrived_at"].nullable)
+
+    def test_item_rows_keep_the_typed_machine_number(self):
+        from models.purchase_request_model import SparePartRequestItemModel
+
+        columns = SparePartRequestItemModel.__table__.columns
+
+        # One part may go to several machines, so a row keeps the numbers typed
+        # by hand ("1042, 1043") and only optionally points at one machine.
+        self.assertTrue(columns["machine_id"].nullable)
+        self.assertTrue(columns["machine_no"].nullable)
+        self.assertEqual(columns["machine_no"].type.length, 255)
 
     def test_status_check_lists_the_three_states(self):
         from models.purchase_request_model import (

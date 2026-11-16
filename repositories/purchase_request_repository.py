@@ -57,7 +57,7 @@ def machine_label(
     identification_no: Optional[str],
     plate_no: Optional[str],
     vin_no: Optional[str],
-    machine_id: int,
+    machine_id: Optional[int],
 ) -> str:
     """What the "ID No" column shows; falls back to the database id."""
 
@@ -65,7 +65,7 @@ def machine_label(
         (identification_no or "").strip()
         or (plate_no or "").strip()
         or (vin_no or "").strip()
-        or f"Makine #{machine_id}"
+        or (f"Makine #{machine_id}" if machine_id else "")
     )
 
 
@@ -111,8 +111,13 @@ class PurchaseRequestRepository:
         return obj
 
     async def _require_machines(self, machine_ids: list[int]) -> None:
-        """Every part row must point at a machine that still exists."""
+        """Every part row that picked a machine must point at an existing one.
 
+        Rows whose machine numbers were typed by hand ("Makine ID No") carry no
+        ``machine_id`` at all, so they are simply skipped here.
+        """
+
+        machine_ids = [machine_id for machine_id in machine_ids if machine_id]
         if not machine_ids:
             return
         result = await self.db.execute(
@@ -172,10 +177,11 @@ class PurchaseRequestRepository:
         if pattern:
             # Machine / garage numbers live on the item rows, so search them
             # through correlated EXISTS sub-queries instead of a JOIN that
-            # would duplicate the request rows.
+            # would duplicate the request rows. The outer join keeps the rows
+            # whose machine was typed by hand (``machine_no``).
             machine_match = (
                 select(SparePartRequestItemModel.id)
-                .join(
+                .outerjoin(
                     AllMachineModel,
                     SparePartRequestItemModel.machine_id == AllMachineModel.id,
                 )
@@ -186,6 +192,7 @@ class PurchaseRequestRepository:
                         AllMachineModel.identification_no.ilike(pattern),
                         AllMachineModel.plate_no.ilike(pattern),
                         AllMachineModel.vin_no.ilike(pattern),
+                        SparePartRequestItemModel.machine_no.ilike(pattern),
                     ),
                 )
                 .exists()
@@ -211,10 +218,11 @@ class PurchaseRequestRepository:
         machine_pattern = build_search_pattern(identification_no)
         if machine_pattern:
             # Excel-style "ID No" column filter: match the machine numbers of
-            # the request's item rows without duplicating the request itself.
+            # the request's item rows — both the linked machine and the numbers
+            # typed by hand — without duplicating the request itself.
             query = query.where(
                 select(SparePartRequestItemModel.id)
-                .join(
+                .outerjoin(
                     AllMachineModel,
                     SparePartRequestItemModel.machine_id == AllMachineModel.id,
                 )
@@ -225,6 +233,9 @@ class PurchaseRequestRepository:
                         AllMachineModel.identification_no.ilike(machine_pattern),
                         AllMachineModel.plate_no.ilike(machine_pattern),
                         AllMachineModel.vin_no.ilike(machine_pattern),
+                        SparePartRequestItemModel.machine_no.ilike(
+                            machine_pattern
+                        ),
                     ),
                 )
                 .exists()
@@ -269,7 +280,7 @@ class PurchaseRequestRepository:
                 AllMachineModel.plate_no,
                 AllMachineModel.vin_no,
             )
-            .join(
+            .outerjoin(
                 AllMachineModel,
                 SparePartRequestItemModel.machine_id == AllMachineModel.id,
             )
@@ -282,6 +293,7 @@ class PurchaseRequestRepository:
                 {
                     "id": item.id,
                     "machine_id": item.machine_id,
+                    "machine_no": item.machine_no,
                     "identification_no": identification_no,
                     "plate_no": plate_no,
                     "vin_no": vin_no,
@@ -338,17 +350,20 @@ class PurchaseRequestRepository:
         machine_ids: list[int] = []
         machine_labels: list[str] = []
         for item in items:
-            if item["machine_id"] in machine_ids:
-                continue
-            machine_ids.append(item["machine_id"])
-            machine_labels.append(
-                machine_label(
-                    item["identification_no"],
-                    item["plate_no"],
-                    item["vin_no"],
-                    item["machine_id"],
-                )
+            # The numbers typed by hand win: one row may cover several machines
+            # ("1042, 1043"), while the linked machine only exists on the rows
+            # that were picked from the list.
+            label = (item.get("machine_no") or "").strip() or machine_label(
+                item["identification_no"],
+                item["plate_no"],
+                item["vin_no"],
+                item["machine_id"],
             )
+            if not label or label in machine_labels:
+                continue
+            machine_labels.append(label)
+            if item.get("machine_id") and item["machine_id"] not in machine_ids:
+                machine_ids.append(item["machine_id"])
 
         return {
             "id": request.id,
@@ -487,7 +502,9 @@ class PurchaseRequestRepository:
             "Talep türü bulunamadı",
         )
 
-        machine_ids = sorted({item.machine_id for item in data.items})
+        machine_ids = sorted(
+            {item.machine_id for item in data.items if item.machine_id}
+        )
         await self._require_machines(machine_ids)
 
         request = SparePartRequestModel(
@@ -501,6 +518,7 @@ class PurchaseRequestRepository:
             items=[
                 SparePartRequestItemModel(
                     machine_id=item.machine_id,
+                    machine_no=item.machine_no,
                     garage_request_no=item.garage_request_no,
                     part_number=item.part_number,
                     description_ru=item.description_ru,
@@ -566,7 +584,7 @@ class PurchaseRequestRepository:
             "Talep türü bulunamadı",
         )
         await self._require_machines(
-            sorted({item.machine_id for item in data.items})
+            sorted({item.machine_id for item in data.items if item.machine_id})
         )
 
         result = await self.db.execute(
@@ -605,6 +623,7 @@ class PurchaseRequestRepository:
                 kept.add(item.id)
 
             item.machine_id = row.machine_id
+            item.machine_no = row.machine_no
             item.garage_request_no = row.garage_request_no
             item.part_number = row.part_number
             item.description_ru = row.description_ru

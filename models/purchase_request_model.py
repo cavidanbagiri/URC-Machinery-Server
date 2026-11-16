@@ -8,7 +8,9 @@ Two independent flows share one page:
     ("ID No"), so the header (title, STF/HTF no, territory, type, date, status)
     lives here and every requested part is a row in
     ``spare_part_request_items`` (garage request no, part number, RU/TR
-    descriptions, quantity, unit, supply date).
+    descriptions, quantity, unit, supply date). The machine numbers are typed
+    by hand (``machine_no``) because the same part may go to many machines;
+    ``machine_id`` only keeps the machine that was picked from the list.
 
 ``service_requests``
     A service/repair job done by an outside company for exactly one machine
@@ -201,12 +203,20 @@ class SparePartRequestItemModel(Base):
         nullable=False,
         index=True,
     )
+    #: ``machine_id`` stays for the rows that were picked from the machine list
+    #: (and for the warehouse link). It is nullable because the user now types
+    #: the machine numbers by hand: one part often goes to several machines, so
+    #: a row cannot point at a single ``all_machines`` row.
     machine_id = Column(
         Integer,
         ForeignKey("all_machines.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
+
+    #: The "Makine ID No" typed by hand, e.g. ``"1042, 1043"``. It keeps the
+    #: numbers exactly as written, so one material row may cover many machines.
+    machine_no = Column(String(255), nullable=True)
 
     #: Every machine has its own garage request number.
     garage_request_no = Column(String(100), nullable=True)
