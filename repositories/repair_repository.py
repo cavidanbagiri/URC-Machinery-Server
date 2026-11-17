@@ -19,12 +19,19 @@ from models.machines_model import (
     TerritoryModel,
     TypeTransportModel,
 )
-from models.repair_model import RepairLogModel, RepairRecordModel, RepairTypeModel
+from models.repair_model import (
+    MAX_REPAIR_DOCUMENT_BYTES,
+    RepairDocumentModel,
+    RepairLogModel,
+    RepairRecordModel,
+    RepairTypeModel,
+)
 from models.user_model import UserModel
 from repositories.car_status_lookup import (
     exclude_scrap_machines,
     resolve_repair_status,
 )
+from repositories.pdf_documents import validate_document
 from schemas.repair_schemas import (
     RepairCancelSchema,
     RepairCloseSchema,
@@ -237,7 +244,10 @@ class RepairRepository:
         )
 
     def _row_to_item(
-        self, row, logs: Optional[list[dict[str, Any]]] = None
+        self,
+        row,
+        logs: Optional[list[dict[str, Any]]] = None,
+        documents: Optional[list[dict[str, Any]]] = None,
     ) -> dict[str, Any]:
         record: RepairRecordModel = row[0]
         machine: AllMachineModel = row[1]
@@ -288,6 +298,7 @@ class RepairRepository:
             "created_at": record.created_at,
             "updated_at": record.updated_at,
             "logs": logs or [],
+            "documents": documents or [],
         }
 
     async def _logs_for_records(
@@ -320,6 +331,47 @@ class RepairRepository:
                     "created_by_id": log.created_by_id,
                     "created_by_name": name or None,
                     "created_at": log.created_at,
+                }
+            )
+        return grouped
+
+    async def _documents_for(
+        self, repair_ids: list[int]
+    ) -> dict[int, list[dict[str, Any]]]:
+        grouped: dict[int, list[dict[str, Any]]] = {
+            repair_id: [] for repair_id in repair_ids
+        }
+        if not repair_ids:
+            return grouped
+
+        result = await self.db.execute(
+            select(
+                RepairDocumentModel,
+                UserModel.firstname,
+                UserModel.lastname,
+            )
+            .outerjoin(
+                UserModel,
+                RepairDocumentModel.uploaded_by_id == UserModel.id,
+            )
+            .where(RepairDocumentModel.repair_id.in_(repair_ids))
+            .order_by(
+                RepairDocumentModel.created_at.asc(),
+                RepairDocumentModel.id.asc(),
+            )
+        )
+        for document, firstname, lastname in result.all():
+            name = " ".join(part for part in (firstname, lastname) if part).strip()
+            grouped.setdefault(document.repair_id, []).append(
+                {
+                    "id": document.id,
+                    "repair_id": document.repair_id,
+                    "file_name": document.file_name,
+                    "content_type": document.content_type,
+                    "file_size": document.file_size,
+                    "uploaded_by_id": document.uploaded_by_id,
+                    "uploaded_by_name": name or None,
+                    "created_at": document.created_at,
                 }
             )
         return grouped
@@ -537,6 +589,9 @@ class RepairRepository:
         )
         result = await self.db.execute(query)
         items = [self._row_to_item(row) for row in result.all()]
+        documents = await self._documents_for([item["id"] for item in items])
+        for item in items:
+            item["documents"] = documents.get(item["id"], [])
 
         if overdue is True:
             items = [item for item in items if item["is_overdue"]]
@@ -816,9 +871,12 @@ class RepairRepository:
         )
         rows = result.all()
         records = [self._row_to_item(row) for row in rows]
-        logs = await self._logs_for_records([record["id"] for record in records])
+        repair_ids = [record["id"] for record in records]
+        logs = await self._logs_for_records(repair_ids)
+        documents = await self._documents_for(repair_ids)
         for record in records:
             record["logs"] = logs.get(record["id"], [])
+            record["documents"] = documents.get(record["id"], [])
         return records
 
     async def get_detail(self, repair_id: int) -> dict[str, Any]:
@@ -830,7 +888,12 @@ class RepairRepository:
             raise HTTPException(status_code=404, detail="Tamir kaydı bulunamadı")
 
         logs = await self._logs_for_records([repair_id])
-        return self._row_to_item(row, logs.get(repair_id, []))
+        documents = await self._documents_for([repair_id])
+        return self._row_to_item(
+            row,
+            logs.get(repair_id, []),
+            documents.get(repair_id, []),
+        )
 
     # ---------- WRITE ----------
 
@@ -1203,4 +1266,70 @@ class RepairRepository:
             await self.db.rollback()
             raise
 
+        return await self.get_detail(repair_id)
+
+    # ---------- DOCUMENTS ----------
+
+    async def add_document(
+        self,
+        repair_id: int,
+        *,
+        file_name: Optional[str],
+        content_type: Optional[str],
+        data: bytes,
+        user_id: Optional[int],
+    ) -> dict[str, Any]:
+        """Attach one PDF paper to the repair and return the refreshed record."""
+
+        record = await self._get_record(repair_id)
+
+        try:
+            info = validate_document(
+                file_name,
+                content_type,
+                data,
+                max_bytes=MAX_REPAIR_DOCUMENT_BYTES,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        document = RepairDocumentModel(
+            repair_id=record.id,
+            file_name=info["file_name"],
+            content_type=info["content_type"],
+            file_size=info["file_size"],
+            file_data=data,
+            uploaded_by_id=user_id,
+        )
+        self.db.add(document)
+        try:
+            await self.db.commit()
+        except IntegrityError as exc:
+            await self.db.rollback()
+            raise HTTPException(
+                status_code=409, detail="Evrak kaydedilemedi"
+            ) from exc
+        except Exception:
+            await self.db.rollback()
+            raise
+        return await self.get_detail(record.id)
+
+    async def get_document(
+        self, repair_id: int, document_id: int
+    ) -> RepairDocumentModel:
+        document = await self.db.get(RepairDocumentModel, document_id)
+        if document is None or document.repair_id != repair_id:
+            raise HTTPException(status_code=404, detail="Evrak bulunamadı")
+        return document
+
+    async def delete_document(
+        self, repair_id: int, document_id: int
+    ) -> dict[str, Any]:
+        document = await self.get_document(repair_id, document_id)
+        await self.db.delete(document)
+        try:
+            await self.db.commit()
+        except Exception:
+            await self.db.rollback()
+            raise
         return await self.get_detail(repair_id)

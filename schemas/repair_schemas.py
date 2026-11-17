@@ -157,6 +157,20 @@ class RepairLogSchema(BaseModel):
     created_at: Optional[datetime] = None
 
 
+class RepairDocumentSchema(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    repair_id: int
+    file_name: str
+    content_type: str = "application/pdf"
+    file_size: int = 0
+
+    uploaded_by_id: Optional[int] = None
+    uploaded_by_name: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
 class RepairFetchItemSchema(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -201,6 +215,7 @@ class RepairFetchItemSchema(BaseModel):
     updated_at: Optional[datetime] = None
 
     logs: list[RepairLogSchema] = Field(default_factory=list)
+    documents: list[RepairDocumentSchema] = Field(default_factory=list)
 
 
 class PaginatedRepairSchema(BaseModel):

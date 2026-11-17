@@ -4,6 +4,10 @@
 A machine can have at most one open repair (``status = 'tamirde'``). Closed and
 cancelled records are retained for history; every state change is written to
 ``repair_logs`` with a Turkish, backend-generated message.
+
+Each repair may own several PDF documents (work order, invoice, receipt). The
+bytes live in PostgreSQL because the API host (Render) has an ephemeral
+filesystem; ``RepairDocumentModel`` keeps them available after restarts.
 """
 
 from sqlalchemy import (
@@ -14,6 +18,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     text,
@@ -24,6 +29,10 @@ from sqlalchemy.sql import func
 from db.base import Base
 # Imported for SQLAlchemy relationship resolution ("GarageServiceModel").
 from models.garage_service_model import GarageServiceModel  # noqa: F401
+
+#: Hard limit for one uploaded PDF (mirrored by
+#: ``ck_repair_documents_size_limit`` and enforced by the repository).
+MAX_REPAIR_DOCUMENT_BYTES = 10 * 1024 * 1024
 
 
 class RepairTypeModel(Base):
@@ -143,6 +152,13 @@ class RepairRecordModel(Base):
         passive_deletes=True,
         order_by="RepairLogModel.created_at, RepairLogModel.id",
     )
+    documents = relationship(
+        "RepairDocumentModel",
+        back_populates="repair",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="RepairDocumentModel.created_at, RepairDocumentModel.id",
+    )
 
 
 class RepairLogModel(Base):
@@ -177,8 +193,58 @@ class RepairLogModel(Base):
     created_by = relationship("UserModel")
 
 
+class RepairDocumentModel(Base):
+    """A PDF paper (work order, invoice, receipt) attached to one repair."""
+
+    __tablename__ = "repair_documents"
+
+    __table_args__ = (
+        CheckConstraint(
+            "file_size > 0",
+            name="ck_repair_documents_size_positive",
+        ),
+        CheckConstraint(
+            f"file_size <= {MAX_REPAIR_DOCUMENT_BYTES}",
+            name="ck_repair_documents_size_limit",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    repair_id = Column(
+        Integer,
+        ForeignKey("repair_records.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    file_name = Column(String(255), nullable=False)
+    content_type = Column(String(100), nullable=False, default="application/pdf")
+    file_size = Column(Integer, nullable=False)
+    file_data = Column(LargeBinary, nullable=False)
+
+    uploaded_by_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    repair = relationship("RepairRecordModel", back_populates="documents")
+    uploaded_by = relationship("UserModel")
+
+    def __str__(self) -> str:
+        return self.file_name
+
+
 __all__ = [
-    "RepairTypeModel",
-    "RepairRecordModel",
+    "MAX_REPAIR_DOCUMENT_BYTES",
+    "RepairDocumentModel",
     "RepairLogModel",
+    "RepairRecordModel",
+    "RepairTypeModel",
 ]

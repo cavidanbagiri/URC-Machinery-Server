@@ -2,13 +2,23 @@
 from datetime import date
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.setup import get_db
 from dependencies.auth import get_current_user
 from dependencies.permissions import require_write_permission
+from models.repair_model import MAX_REPAIR_DOCUMENT_BYTES
 from models.user_model import UserModel
+from repositories.pdf_documents import content_disposition
 from repositories.repair_repository import RepairRepository
 from schemas.repair_schemas import (
     PaginatedRepairSchema,
@@ -298,3 +308,90 @@ async def add_repair_note(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Not eklenemedi: {e}")
+
+
+# =========================================================
+# PDF DOCUMENTS
+# =========================================================
+
+@router.post(
+    "/{repair_id}/documents",
+    response_model=RepairFetchItemSchema,
+    status_code=201,
+)
+async def upload_repair_document(
+    repair_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[UserModel, Depends(require_write_permission)],
+    file: Annotated[UploadFile, File(description="PDF evrak")],
+):
+    """Attach a PDF (work order, invoice, receipt) to a repair record."""
+
+    try:
+        try:
+            # Read one byte past the limit so oversized files are detected
+            # without buffering an unbounded upload in memory.
+            data = await file.read(MAX_REPAIR_DOCUMENT_BYTES + 1)
+        finally:
+            await file.close()
+
+        return await RepairRepository(db).add_document(
+            repair_id,
+            file_name=file.filename,
+            content_type=file.content_type,
+            data=data,
+            user_id=current_user.id,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Evrak yüklenemedi: {e}")
+
+
+@router.get("/{repair_id}/documents/{document_id}")
+async def fetch_repair_document(
+    repair_id: int,
+    document_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    download: bool = Query(False),
+):
+    """Stream a PDF; ``download=true`` forces the browser save dialog."""
+
+    try:
+        document = await RepairRepository(db).get_document(
+            repair_id, document_id
+        )
+        return Response(
+            content=document.file_data,
+            media_type=document.content_type or "application/pdf",
+            headers={
+                "Content-Disposition": content_disposition(
+                    document.file_name, download=download
+                ),
+                "Cache-Control": "private, no-store",
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Evrak açılamadı: {e}")
+
+
+@router.delete(
+    "/{repair_id}/documents/{document_id}",
+    response_model=RepairFetchItemSchema,
+)
+async def delete_repair_document(
+    repair_id: int,
+    document_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[UserModel, Depends(require_write_permission)],
+):
+    try:
+        return await RepairRepository(db).delete_document(
+            repair_id, document_id
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Evrak silinemedi: {e}")

@@ -12,6 +12,10 @@ from datetime import date, timedelta
 
 from pydantic import ValidationError
 
+from models.repair_model import (
+    MAX_REPAIR_DOCUMENT_BYTES,
+    RepairDocumentModel,
+)
 from repositories.repair_repository import (
     QUICK_OPEN_REPAIR_TYPE_NAME,
     REPAIR_STATUS_DEFINITIONS,
@@ -551,6 +555,158 @@ class ScrapMachineLookupTests(unittest.TestCase):
         self.assertIn("NOT IN", sql)
         self.assertIn("hurda", sql.lower())
         self.assertIn("lower(trim(", sql)
+
+
+class RepairDocumentTests(unittest.TestCase):
+    """PDF papers attached to a repair share the daily fault / tire rules."""
+
+    PDF_BYTES = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"
+
+    def test_accepts_pdf_and_strips_paths(self):
+        from repositories.pdf_documents import validate_document
+
+        info = validate_document(
+            r"C:\Users\me\Tamir Faturası.pdf",
+            "application/pdf",
+            self.PDF_BYTES,
+            max_bytes=MAX_REPAIR_DOCUMENT_BYTES,
+        )
+        self.assertEqual(info["file_name"], "Tamir Faturası.pdf")
+        self.assertEqual(info["content_type"], "application/pdf")
+        self.assertEqual(info["file_size"], len(self.PDF_BYTES))
+
+    def test_rejects_non_pdf_content_type(self):
+        from repositories.pdf_documents import validate_document
+
+        with self.assertRaisesRegex(ValueError, "Sadece PDF"):
+            validate_document("foto.png", "image/png", self.PDF_BYTES)
+
+    def test_rejects_fake_pdf_bytes(self):
+        from repositories.pdf_documents import validate_document
+
+        with self.assertRaisesRegex(ValueError, "geçerli bir PDF"):
+            validate_document("sahte.pdf", "application/pdf", b"not a pdf")
+
+    def test_rejects_oversized_file(self):
+        from repositories.pdf_documents import validate_document
+
+        oversized = b"%PDF-" + b"0" * MAX_REPAIR_DOCUMENT_BYTES
+        with self.assertRaisesRegex(ValueError, "10 MB"):
+            validate_document(
+                "buyuk.pdf",
+                "application/pdf",
+                oversized,
+                max_bytes=MAX_REPAIR_DOCUMENT_BYTES,
+            )
+
+    def test_size_limit_matches_the_shared_pdf_module(self):
+        from repositories.pdf_documents import MAX_PDF_BYTES
+
+        self.assertEqual(MAX_REPAIR_DOCUMENT_BYTES, MAX_PDF_BYTES)
+        self.assertEqual(MAX_REPAIR_DOCUMENT_BYTES, 10 * 1024 * 1024)
+
+    def test_model_columns_and_constraints(self):
+        self.assertEqual(RepairDocumentModel.__tablename__, "repair_documents")
+        columns = set(RepairDocumentModel.__table__.columns.keys())
+        self.assertEqual(
+            columns,
+            {
+                "id",
+                "repair_id",
+                "file_name",
+                "content_type",
+                "file_size",
+                "file_data",
+                "uploaded_by_id",
+                "created_at",
+            },
+        )
+        # The bytes must be dropped together with the repair record.
+        repair_fk = next(
+            fk
+            for fk in RepairDocumentModel.__table__.foreign_keys
+            if fk.parent.name == "repair_id"
+        )
+        self.assertEqual(repair_fk.ondelete, "CASCADE")
+
+    def test_schema_defaults_empty_documents(self):
+        from schemas.repair_schemas import RepairFetchItemSchema
+
+        item = RepairFetchItemSchema(
+            id=1,
+            machine_id=2,
+            repair_type_id=3,
+            repair_type_name="Genel Bakım",
+            garage_service_id=None,
+            garage_service_name=None,
+            identification_no=None,
+            plate_no=None,
+            vin_no=None,
+            territory_id=None,
+            type_id=None,
+            company_id=None,
+            territory_name=None,
+            type_name=None,
+            company_name=None,
+            car_mark_name=None,
+            car_model_name=None,
+            fault_location=None,
+            notes=None,
+            entry_date=date.today(),
+            estimated_exit_date=None,
+            exit_date=None,
+            status="tamirde",
+            status_detail={
+                "code": "tamirde",
+                "name": "Tamirde",
+                "color": "blue",
+            },
+            previous_machine_status_id=None,
+            previous_machine_status_name=None,
+            duration_days=None,
+            days_remaining=None,
+            is_overdue=False,
+            created_by_id=None,
+            created_by_name=None,
+            created_at=None,
+            updated_at=None,
+        )
+        self.assertEqual(item.documents, [])
+        self.assertEqual(item.logs, [])
+
+    def test_router_exposes_document_endpoints(self):
+        from routers.repair_router import router
+
+        routes = {
+            (route.path, tuple(sorted(route.methods)))
+            for route in router.routes
+            if hasattr(route, "methods")
+        }
+        self.assertIn(("/{repair_id}/documents", ("POST",)), routes)
+        self.assertIn(
+            ("/{repair_id}/documents/{document_id}", ("DELETE",)), routes
+        )
+        self.assertIn(
+            ("/{repair_id}/documents/{document_id}", ("GET",)), routes
+        )
+
+    def test_repository_helpers_are_async(self):
+        from inspect import iscoroutinefunction
+
+        from repositories.repair_repository import RepairRepository
+
+        for method_name in (
+            "add_document",
+            "get_document",
+            "delete_document",
+            "_documents_for",
+        ):
+            with self.subTest(method=method_name):
+                self.assertTrue(
+                    iscoroutinefunction(
+                        getattr(RepairRepository, method_name)
+                    )
+                )
 
 
 if __name__ == "__main__":
