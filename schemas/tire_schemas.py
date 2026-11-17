@@ -154,6 +154,30 @@ class TireMachineOptionSchema(BaseModel):
     status_name: Optional[str] = None
 
 
+# =========================================================
+# SETTINGS LOOKUP — TIRE POSITIONS
+# =========================================================
+
+class TirePositionCreateSchema(BaseModel):
+    """Payload of the Settings tab (Ayarlar → Lastik Konumu)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., max_length=MAX_POSITION_LENGTH)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        return normalize_position(value)
+
+
+class TirePositionSchema(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+
+
 __all__ = [
     "MAX_BRAND_MODEL_LENGTH",
     "MAX_KM_HOUR_LENGTH",
@@ -166,6 +190,8 @@ __all__ = [
     "TireChangeDocumentSchema",
     "TireChangeItemSchema",
     "TireMachineOptionSchema",
+    "TirePositionCreateSchema",
+    "TirePositionSchema",
     "TireSummarySchema",
     "normalize_position",
 ]

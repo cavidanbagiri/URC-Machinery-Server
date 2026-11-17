@@ -40,6 +40,25 @@ from db.base import Base
 MAX_TIRE_DOCUMENT_BYTES = 10 * 1024 * 1024
 
 
+class TirePositionModel(Base):
+    """Lookup managed from Settings ('Sol Ön', 'Sağ Arka 1', ...).
+
+    ``tire_changes.position`` stays free text: a crane and a truck need
+    different names, and records must remain readable even if a position is
+    later removed from this list. The lookup only provides the suggestions
+    (form datalist and column filter); renaming an entry rewrites the stored
+    text of the existing changes (see ``TirePositionRepository.update``).
+    """
+
+    __tablename__ = "tire_positions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(50), nullable=False, unique=True, index=True)
+
+    def __str__(self) -> str:
+        return f"{self.name}"
+
+
 class TireChangeModel(Base):
     __tablename__ = "tire_changes"
 
@@ -153,4 +172,5 @@ __all__ = [
     "MAX_TIRE_DOCUMENT_BYTES",
     "TireChangeDocumentModel",
     "TireChangeModel",
+    "TirePositionModel",
 ]

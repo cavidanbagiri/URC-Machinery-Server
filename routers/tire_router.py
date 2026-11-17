@@ -13,12 +13,15 @@ from dependencies.permissions import require_write_permission
 from models.tire_model import MAX_TIRE_DOCUMENT_BYTES
 from models.user_model import UserModel
 from repositories.pdf_documents import content_disposition
+from repositories.tire_position_repository import TirePositionRepository
 from repositories.tire_repository import TireRepository
 from schemas.tire_schemas import (
     PaginatedTireChangeSchema,
     TireChangeCreateSchema,
     TireChangeItemSchema,
     TireMachineOptionSchema,
+    TirePositionCreateSchema,
+    TirePositionSchema,
     TireSummarySchema,
 )
 
@@ -211,3 +214,82 @@ async def delete_tire_document(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Evrak silinemedi: {e}")
+
+
+# =========================================================
+# SETTINGS — TIRE POSITIONS (Ayarlar → Lastik Konumu)
+# =========================================================
+
+@router.get("/positions", response_model=list[TirePositionSchema])
+async def fetch_tire_positions(db: Annotated[AsyncSession, Depends(get_db)]):
+    """Suggestions shown in the form datalist and the column filter."""
+
+    try:
+        return await TirePositionRepository(db).fetch_all()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Lastik konumları getirilemedi: {e}"
+        )
+
+
+@router.post(
+    "/positions",
+    status_code=201,
+    response_model=TirePositionSchema,
+    dependencies=[Depends(require_write_permission)],
+)
+async def create_tire_position(
+    data: TirePositionCreateSchema,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    try:
+        return await TirePositionRepository(db).create(data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Lastik konumu oluşturulamadı: {e}"
+        )
+
+
+@router.put(
+    "/positions/{position_id}",
+    response_model=TirePositionSchema,
+    dependencies=[Depends(require_write_permission)],
+)
+async def update_tire_position(
+    position_id: int,
+    data: TirePositionCreateSchema,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Rename a position; existing changes are moved to the new label."""
+
+    try:
+        return await TirePositionRepository(db).update(position_id, data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Lastik konumu güncellenemedi: {e}"
+        )
+
+
+@router.delete(
+    "/positions/{position_id}",
+    status_code=204,
+    dependencies=[Depends(require_write_permission)],
+)
+async def delete_tire_position(
+    position_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    try:
+        await TirePositionRepository(db).delete(position_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Lastik konumu silinemedi: {e}"
+        )

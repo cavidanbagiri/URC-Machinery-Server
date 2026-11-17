@@ -23,6 +23,7 @@ from repositories.tire_repository import (
 )
 from schemas.tire_schemas import (
     TireChangeCreateSchema,
+    TirePositionCreateSchema,
     TireSummarySchema,
     normalize_position,
 )
@@ -120,6 +121,26 @@ class TireSummarySchemaTests(unittest.TestCase):
         summary = TireSummarySchema(total=42, changed_today=3)
         self.assertEqual(summary.total, 42)
         self.assertEqual(summary.changed_today, 3)
+
+
+class TirePositionSchemaTests(unittest.TestCase):
+    """Settings tab (Ayarlar → Lastik Konumu) payload validation."""
+
+    def test_name_is_normalized(self):
+        parsed = TirePositionCreateSchema(name="  Sağ   Arka 2 ")
+        self.assertEqual(parsed.name, "Sağ Arka 2")
+
+    def test_blank_name_is_rejected(self):
+        with self.assertRaises(ValidationError):
+            TirePositionCreateSchema(name=" \t ")
+
+    def test_name_length_is_limited(self):
+        with self.assertRaises(ValidationError):
+            TirePositionCreateSchema(name="L" * 51)
+
+    def test_unknown_fields_are_rejected(self):
+        with self.assertRaises(ValidationError):
+            TirePositionCreateSchema(name="Sol Ön", color="red")
 
 
 class PositionHelperTests(unittest.TestCase):
