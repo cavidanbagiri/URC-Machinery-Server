@@ -393,6 +393,26 @@ class RepairFilterTests(unittest.TestCase):
                 default = params[filter_name].default
                 self.assertIsNone(getattr(default, "default", default))
 
+    def test_list_defaults_to_open_repairs_only(self):
+        """Finished repairs stay in history but leave the Arızalı Ekipman table."""
+        from inspect import signature
+
+        from repositories.repair_repository import (
+            ACTIVE_REPAIR_STATUS,
+            RepairRepository,
+        )
+
+        params = signature(RepairRepository._fetch_items).parameters
+        self.assertIn("active_only", params)
+        self.assertIs(params["active_only"].default, True)
+        self.assertEqual(ACTIVE_REPAIR_STATUS, "tamirde")
+
+        # ``fetch_paginated`` never forwards ``active_only``: the public list
+        # always keeps the default so completed rows can not leak in.
+        self.assertNotIn(
+            "active_only", signature(RepairRepository.fetch_paginated).parameters
+        )
+
 
 class CarStatusLookupTests(unittest.TestCase):
     """The repair status row is renamed by hand, so the lookup must be tolerant.
@@ -480,6 +500,57 @@ class CarStatusLookupTests(unittest.TestCase):
             list(signature(RepairRepository._get_repair_status).parameters),
             ["self"],
         )
+
+
+class ScrapMachineLookupTests(unittest.TestCase):
+    """Scrapped ("Hurda") machines stay in the database but leave every list.
+
+    The label is editable on the Settings page, so the helpers match the word
+    "hurda" (trimmed, case folded) instead of one exact seed value.
+    """
+
+    def test_scrap_status_names_are_detected(self):
+        from repositories.car_status_lookup import is_scrap_status_name
+
+        for name in (
+            "Hurda",
+            "hurda",
+            "HURDA",
+            "  Hurda  ",
+            "Hurda (Eski)",
+            "HURDAYA AYRILDI",
+        ):
+            with self.subTest(name=name):
+                self.assertTrue(is_scrap_status_name(name))
+
+    def test_other_statuses_are_not_treated_as_scrap(self):
+        from repositories.car_status_lookup import is_scrap_status_name
+
+        for name in ("Aktif", "Bakımda", "Arızalı", "Tamirde", "", None):
+            with self.subTest(name=name):
+                self.assertFalse(is_scrap_status_name(name))
+
+    def test_exclude_condition_matches_keyword_and_keeps_null_status(self):
+        import models.user_model  # noqa: F401 - registers the mapper dependency
+        from sqlalchemy import select
+        from sqlalchemy.dialects import postgresql
+
+        from models.machines_model import AllMachineModel
+        from repositories.car_status_lookup import exclude_scrap_machines
+
+        sql = str(
+            select(AllMachineModel.id)
+            .where(exclude_scrap_machines())
+            .compile(
+                dialect=postgresql.dialect(),
+                compile_kwargs={"literal_binds": True},
+            )
+        )
+
+        self.assertIn("status_id IS NULL", sql)
+        self.assertIn("NOT IN", sql)
+        self.assertIn("hurda", sql.lower())
+        self.assertIn("lower(trim(", sql)
 
 
 if __name__ == "__main__":

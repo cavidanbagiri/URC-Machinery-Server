@@ -23,6 +23,7 @@ from models.machines_model import (
 )
 from models.repair_model import RepairTypeModel
 from models.user_model import UserModel
+from repositories.car_status_lookup import exclude_scrap_machines
 from repositories.pdf_documents import (
     clamp_pagination,
     content_disposition,
@@ -31,7 +32,7 @@ from repositories.pdf_documents import (
 )
 from schemas.daily_fault_schemas import DailyFaultCreateSchema, normalize_km_hour
 
-DEFAULT_LIMIT = 20
+DEFAULT_LIMIT = 100
 MAX_LIMIT = 100
 MAX_MACHINE_OPTIONS = 50
 
@@ -213,6 +214,9 @@ class DailyFaultRepository:
         if date_to is not None:
             filters.append(DailyFaultModel.fault_date <= date_to)
 
+        # "Hurda" (scrapped) machines stay in the database but are never listed.
+        filters.append(exclude_scrap_machines())
+
         if filters:
             query = query.where(*filters)
 
@@ -262,6 +266,9 @@ class DailyFaultRepository:
             AllMachineModel,
             CarStatusModel.name.label("status_name"),
         ).outerjoin(CarStatusModel, AllMachineModel.status_id == CarStatusModel.id)
+
+        # Scrapped machines can not receive new fault records.
+        query = query.where(exclude_scrap_machines())
 
         if search:
             pattern = f"%{search.strip()}%"

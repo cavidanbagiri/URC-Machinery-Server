@@ -51,7 +51,7 @@ async def fetch_dummy_data():
 @router.get("/fetch_maintenance", response_model=PaginatedMaintenanceSchema)
 async def fetch_maintenance(
     db: Annotated[AsyncSession, Depends(get_db)],
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(100, ge=1, le=100),
     offset: int = Query(0, ge=0),
     search: Optional[str] = Query(None, max_length=100),
     usage_unit: Optional[UsageUnit] = Query(None),

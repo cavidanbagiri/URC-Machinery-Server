@@ -13,10 +13,10 @@ exact string. That keeps databases that still use the legacy seed value
 from typing import Iterable, Optional
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.machines_model import CarStatusModel
+from models.machines_model import AllMachineModel, CarStatusModel
 
 # Machine statuses that mean "the machine is under repair / faulty".
 # Both the current Turkish label and the legacy seed value are accepted.
@@ -69,6 +69,39 @@ def normalize_status_name(name: Optional[str]) -> str:
 def is_repair_status_name(name: Optional[str]) -> bool:
     """True when the given label belongs to the "under repair" status."""
     return normalize_status_name(name) in REPAIR_STATUS_ALIASES
+
+
+# =========================================================
+# SCRAP ("Hurda") MACHINES
+# =========================================================
+# Machines whose status is "Hurda" must stay in the database (history, audit,
+# spare part requests, ...) but they are retired equipment: they are filtered
+# out of every list, counter and machine picker. The labels are editable in
+# Settings, so the word "hurda" is matched instead of one exact seed value.
+SCRAP_STATUS_KEYWORD = "hurda"
+
+
+def is_scrap_status_name(name: Optional[str]) -> bool:
+    """True when the given label belongs to the "scrapped" status."""
+    return SCRAP_STATUS_KEYWORD in normalize_status_name(name)
+
+
+def scrap_status_ids():
+    """``SELECT car_statuses.id`` of the rows that mean "scrapped"."""
+    return select(CarStatusModel.id).where(
+        func.lower(func.trim(CarStatusModel.name)).like(f"%{SCRAP_STATUS_KEYWORD}%")
+    )
+
+
+def exclude_scrap_machines():
+    """SQL condition that drops "Hurda" (scrapped) machines from a query.
+
+    ``status_id IS NULL`` machines are kept: they simply have no status yet.
+    """
+    return or_(
+        AllMachineModel.status_id.is_(None),
+        ~AllMachineModel.status_id.in_(scrap_status_ids()),
+    )
 
 
 def pick_repair_status(

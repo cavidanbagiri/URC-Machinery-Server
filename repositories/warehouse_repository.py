@@ -42,7 +42,7 @@ from schemas.warehouse_schemas import (
     WarehouseReceiptCreateSchema,
 )
 
-DEFAULT_LIMIT = 20
+DEFAULT_LIMIT = 100
 MAX_LIMIT = 100
 
 

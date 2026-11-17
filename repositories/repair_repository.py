@@ -21,7 +21,10 @@ from models.machines_model import (
 )
 from models.repair_model import RepairLogModel, RepairRecordModel, RepairTypeModel
 from models.user_model import UserModel
-from repositories.car_status_lookup import resolve_repair_status
+from repositories.car_status_lookup import (
+    exclude_scrap_machines,
+    resolve_repair_status,
+)
 from schemas.repair_schemas import (
     RepairCancelSchema,
     RepairCloseSchema,
@@ -43,6 +46,11 @@ REPAIR_STATUS_DEFINITIONS: dict[str, dict[str, str]] = {
 }
 
 REPAIR_STATUS_ORDER = ["tamirde", "tamamlandi", "iptal"]
+
+# The "Arızalı Ekipman" page only lists equipment that is still waiting for or
+# under repair. Completed/cancelled records stay in the database (machine
+# history today, a dedicated log view later) but are never listed.
+ACTIVE_REPAIR_STATUS = "tamirde"
 
 # Quick open (from the machine status modal) creates an open repair without
 # asking the user for any values. The details are filled in on the Repair page.
@@ -449,6 +457,7 @@ class RepairRepository:
         notes: Optional[str] = None,
         exit_date_from: Optional[date] = None,
         exit_date_to: Optional[date] = None,
+        active_only: bool = True,
     ) -> list[dict[str, Any]]:
         query = self._base_select()
         filters = []
@@ -467,6 +476,9 @@ class RepairRepository:
             )
         if status:
             filters.append(RepairRecordModel.status == status)
+        if active_only:
+            # Only open repairs are listed on the "Arızalı Ekipman" page.
+            filters.append(RepairRecordModel.status == ACTIVE_REPAIR_STATUS)
         if repair_type_id is not None:
             filters.append(RepairRecordModel.repair_type_id == repair_type_id)
         if garage_service_id is not None:
@@ -511,6 +523,9 @@ class RepairRepository:
         if exit_date_to is not None:
             filters.append(RepairRecordModel.estimated_exit_date <= exit_date_to)
 
+        # "Hurda" (scrapped) machines stay in the database but are never listed.
+        filters.append(exclude_scrap_machines())
+
         if filters:
             query = query.where(*filters)
 
@@ -538,7 +553,7 @@ class RepairRepository:
     async def fetch_paginated(
         self,
         *,
-        limit: int = 20,
+        limit: int = 100,
         offset: int = 0,
         search: Optional[str] = None,
         status: Optional[str] = None,
@@ -559,7 +574,7 @@ class RepairRepository:
         exit_date_to: Optional[date] = None,
     ) -> dict[str, Any]:
         if limit < 1:
-            limit = 20
+            limit = 100
         if limit > 100:
             limit = 100
         if offset < 0:
@@ -592,7 +607,10 @@ class RepairRepository:
         }
 
     async def get_summary(self) -> dict[str, Any]:
-        items = await self._fetch_items()
+        # The summary keeps the finished repairs for its historical counters
+        # (total / today / average), even though the list itself only shows
+        # open repairs.
+        items = await self._fetch_items(active_only=False)
         today = date.today()
 
         counts = {code: 0 for code in REPAIR_STATUS_ORDER}
@@ -634,7 +652,11 @@ class RepairRepository:
         garage_services = [(row.id, row.name) for row in garage_result.all()]
 
         total_machines = (
-            await self.db.scalar(select(func.count()).select_from(AllMachineModel))
+            await self.db.scalar(
+                select(func.count())
+                .select_from(AllMachineModel)
+                .where(exclude_scrap_machines())
+            )
         ) or 0
         broken_machines = len(
             {item["machine_id"] for item in items if item["status"] == "tamirde"}
@@ -642,7 +664,9 @@ class RepairRepository:
         active_machines = count_available_equipment(total_machines, broken_machines)
 
         return {
-            "total": len(items),
+            # ``total`` mirrors the list (open repairs only), so the card and
+            # the table always agree.
+            "total": counts["tamirde"],
             "active": counts["tamirde"],
             "active_ratio": compute_active_ratio(active_machines, total_machines),
             "total_machines": total_machines,
@@ -694,12 +718,16 @@ class RepairRepository:
             limit = 50
 
         active_machine_ids = select(RepairRecordModel.machine_id).where(
-            RepairRecordModel.status == "tamirde"
+            RepairRecordModel.status == ACTIVE_REPAIR_STATUS
         )
         query = (
             select(AllMachineModel, CarStatusModel.name.label("status_name"))
             .outerjoin(CarStatusModel, AllMachineModel.status_id == CarStatusModel.id)
-            .where(AllMachineModel.id.not_in(active_machine_ids))
+            .where(
+                AllMachineModel.id.not_in(active_machine_ids),
+                # Scrapped machines can not be taken into repair again.
+                exclude_scrap_machines(),
+            )
         )
         if search:
             pattern = f"%{search.strip()}%"

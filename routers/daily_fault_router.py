@@ -35,7 +35,7 @@ router = APIRouter(dependencies=[Depends(get_current_user)])
 @router.get("/fetch_daily_faults", response_model=PaginatedDailyFaultSchema)
 async def fetch_daily_faults(
     db: Annotated[AsyncSession, Depends(get_db)],
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(100, ge=1, le=100),
     offset: int = Query(0, ge=0),
     search: Optional[str] = Query(None, max_length=100),
     territory_id: Optional[int] = Query(None),

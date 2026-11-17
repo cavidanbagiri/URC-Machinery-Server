@@ -22,6 +22,7 @@ from models.maintenance_model import (
     MaintenanceRecordModel,
 )
 from models.user_model import UserModel
+from repositories.car_status_lookup import exclude_scrap_machines
 from schemas.maintenance_schemas import (
     MaintenanceCompleteSchema,
     MaintenanceReadingCreateSchema,
@@ -341,6 +342,10 @@ class MaintenanceRepository:
                 )
             )
 
+        # "Hurda" (scrapped) machines stay in the database but are never listed,
+        # so they neither appear in the table nor in its summary counters.
+        filters.append(exclude_scrap_machines())
+
         if filters:
             query = query.where(*filters)
 
@@ -392,7 +397,7 @@ class MaintenanceRepository:
     async def fetch_paginated(
         self,
         *,
-        limit: int = 20,
+        limit: int = 100,
         offset: int = 0,
         search: Optional[str] = None,
         usage_unit: Optional[str] = None,
@@ -409,7 +414,7 @@ class MaintenanceRepository:
         sort_order: Optional[str] = None,
     ) -> dict[str, Any]:
         if limit < 1:
-            limit = 20
+            limit = 100
         if limit > 100:
             limit = 100
         if offset < 0:

@@ -22,6 +22,8 @@ from models.forum_model import (
 )
 from models.user_model import UserModel
 from repositories.forum_repository import (
+    DEFAULT_LIMIT,
+    MAX_LIMIT,
     can_manage_topic,
     clamp_pagination,
     ensure_can_manage_topic,
@@ -131,8 +133,8 @@ class ForumResolveSchemaTests(unittest.TestCase):
 
 class ForumPagingTests(unittest.TestCase):
     def test_clamp_pagination(self):
-        self.assertEqual(clamp_pagination(0, -5), (10, 0))
-        self.assertEqual(clamp_pagination(500, 30), (50, 30))
+        self.assertEqual(clamp_pagination(0, -5), (DEFAULT_LIMIT, 0))
+        self.assertEqual(clamp_pagination(500, 30), (MAX_LIMIT, 30))
         self.assertEqual(clamp_pagination(10, 20), (10, 20))
 
     def test_status_filter_falls_back_to_all(self):

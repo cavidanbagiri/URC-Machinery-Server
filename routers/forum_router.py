@@ -47,7 +47,7 @@ router = APIRouter(dependencies=[Depends(get_current_user)])
 async def fetch_topics(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[UserModel, Depends(get_current_user)],
-    limit: int = Query(10, ge=1, le=50),
+    limit: int = Query(100, ge=1, le=100),
     offset: int = Query(0, ge=0),
     search: Optional[str] = Query(None, max_length=100),
     status: Optional[str] = Query(None, max_length=20),

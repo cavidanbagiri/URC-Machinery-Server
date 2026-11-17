@@ -56,7 +56,7 @@ router = APIRouter(dependencies=[Depends(get_current_user)])
 @router.get("/spare-parts", response_model=PaginatedSparePartRequestSchema)
 async def fetch_spare_part_requests(
     db: Annotated[AsyncSession, Depends(get_db)],
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(100, ge=1, le=100),
     offset: int = Query(0, ge=0),
     search: Optional[str] = Query(None, max_length=100),
     identification_no: Optional[str] = Query(None, max_length=50),
@@ -315,7 +315,7 @@ async def delete_spare_part_document(
 @router.get("/service-requests", response_model=PaginatedServiceRequestSchema)
 async def fetch_service_requests(
     db: Annotated[AsyncSession, Depends(get_db)],
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(100, ge=1, le=100),
     offset: int = Query(0, ge=0),
     search: Optional[str] = Query(None, max_length=100),
     identification_no: Optional[str] = Query(None, max_length=50),

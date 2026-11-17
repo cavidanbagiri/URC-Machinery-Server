@@ -66,7 +66,7 @@ async def fetch_summary(db: Annotated[AsyncSession, Depends(get_db)]):
 @router.get("/stock", response_model=PaginatedWarehouseItemSchema)
 async def fetch_stock(
     db: Annotated[AsyncSession, Depends(get_db)],
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(100, ge=1, le=100),
     offset: int = Query(0, ge=0),
     search: Optional[str] = Query(None, max_length=100),
     territory_id: Optional[int] = Query(None),
@@ -159,7 +159,7 @@ async def delete_stock_item(
 @router.get("/movements", response_model=PaginatedWarehouseMovementSchema)
 async def fetch_movements(
     db: Annotated[AsyncSession, Depends(get_db)],
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(100, ge=1, le=100),
     offset: int = Query(0, ge=0),
     search: Optional[str] = Query(None, max_length=100),
     movement_type: Optional[str] = Query(None, max_length=10),
@@ -216,7 +216,7 @@ async def create_movement(
 )
 async def fetch_pending_receipts(
     db: Annotated[AsyncSession, Depends(get_db)],
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(100, ge=1, le=100),
     offset: int = Query(0, ge=0),
     search: Optional[str] = Query(None, max_length=100),
 ):

@@ -17,6 +17,7 @@ from pydantic import ValidationError
 
 from models.purchase_request_model import status_label
 from repositories.purchase_request_repository import (
+    DEFAULT_LIMIT,
     MAX_LIMIT,
     build_search_pattern,
     clamp_pagination,
@@ -224,7 +225,7 @@ class ServiceRequestCreateSchemaTests(unittest.TestCase):
 
 class RepositoryHelperTests(unittest.TestCase):
     def test_clamp_pagination_uses_defaults_and_limits(self):
-        self.assertEqual(clamp_pagination(0, -5), (20, 0))
+        self.assertEqual(clamp_pagination(0, -5), (DEFAULT_LIMIT, 0))
         self.assertEqual(clamp_pagination(500, 10), (MAX_LIMIT, 10))
         self.assertEqual(clamp_pagination(15, 30), (15, 30))
 

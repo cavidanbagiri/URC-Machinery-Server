@@ -495,7 +495,7 @@ async def create_machine(
 )
 async def fetch_machines(
     db: Annotated[AsyncSession, Depends(get_db)],
-    limit: int = 20,
+    limit: int = 100,
     offset: int = 0,
     identification_no: Optional[str] = None,
     vin_no: Optional[str] = None,

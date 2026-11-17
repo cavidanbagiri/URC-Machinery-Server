@@ -17,7 +17,11 @@ from models.machines_model import (
     CarStatusModel
 )
 from models.repair_model import RepairRecordModel, RepairTypeModel
-from repositories.car_status_lookup import resolve_repair_status
+from repositories.car_status_lookup import (
+    exclude_scrap_machines,
+    is_scrap_status_name,
+    resolve_repair_status,
+)
 from schemas.machines_schemas import (
     CreateTerritorySchema,
     CreateTypeTransportSchema,
@@ -329,7 +333,7 @@ class AllMachineRepository:
     # ---------- FETCH (PAGINATION İLƏ) ----------
     async def fetch_paginated(
             self,
-            limit: int = 20,
+            limit: int = 100,
             offset: int = 0,
             identification_no: str | None = None,
             vin_no: str | None = None,
@@ -346,7 +350,7 @@ class AllMachineRepository:
     ) -> dict:
         # Limit / offset yoxlama
         if limit < 1:
-            limit = 20
+            limit = 100
         if limit > 100:
             limit = 100
         if offset < 0:
@@ -392,6 +396,9 @@ class AllMachineRepository:
             year_end = datetime(production_year, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
             filters.append(AllMachineModel.production_year >= year_start)
             filters.append(AllMachineModel.production_year <= year_end)
+
+        # "Hurda" (scrapped) machines stay in the database but are never listed.
+        filters.append(exclude_scrap_machines())
 
         if filters:
             query = query.where(*filters)
@@ -525,6 +532,9 @@ class AllMachineRepository:
         """
         Hər status üçün maşın sayını qaytarır.
         LEFT JOIN — heç maşını olmayan status da görünür (count=0).
+
+        "Hurda" (scrapped) maşınlar sayılmır: sətirlər bazada qalır, lakin
+        nə ümumi sayda, nə də status kartlarında görünür.
         """
         query = (
             select(
@@ -539,10 +549,14 @@ class AllMachineRepository:
         )
 
         result = await self.db.execute(query)
-        rows = result.all()
+        # The scrap status card is dropped as well, so the KPI row never offers
+        # a link to a list that is intentionally empty.
+        rows = [row for row in result.all() if not is_scrap_status_name(row.name)]
 
         # Total
-        total_query = select(func.count(AllMachineModel.id))
+        total_query = select(func.count(AllMachineModel.id)).where(
+            exclude_scrap_machines()
+        )
         total_result = await self.db.execute(total_query)
         total = total_result.scalar() or 0
 
@@ -585,6 +599,7 @@ class AllMachineRepository:
             .where(
                 AllMachineModel.type_id.isnot(None),
                 AllMachineModel.territory_id.isnot(None),
+                exclude_scrap_machines(),
             )
             .group_by(AllMachineModel.type_id, AllMachineModel.territory_id)
         )

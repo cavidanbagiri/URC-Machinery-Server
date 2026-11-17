@@ -26,6 +26,7 @@ from models.warehouse_model import (
     stock_status_label,
 )
 from repositories.warehouse_repository import (
+    DEFAULT_LIMIT,
     MAX_LIMIT,
     apply_movement,
     build_search_pattern,
@@ -242,7 +243,7 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(build_search_pattern(" filtre "), "%filtre%")
 
     def test_pagination_is_clamped(self):
-        self.assertEqual(clamp_pagination(0, -5), (20, 0))
+        self.assertEqual(clamp_pagination(0, -5), (DEFAULT_LIMIT, 0))
         self.assertEqual(clamp_pagination(500, 40), (MAX_LIMIT, 40))
 
     def test_validate_movement_type(self):

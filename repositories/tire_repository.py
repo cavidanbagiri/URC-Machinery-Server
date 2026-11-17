@@ -22,6 +22,7 @@ from models.tire_model import (
     TireChangeModel,
 )
 from models.user_model import UserModel
+from repositories.car_status_lookup import exclude_scrap_machines
 from repositories.pdf_documents import (
     clamp_pagination,
     content_disposition,
@@ -30,7 +31,7 @@ from repositories.pdf_documents import (
 )
 from schemas.tire_schemas import TireChangeCreateSchema, normalize_position
 
-DEFAULT_LIMIT = 20
+DEFAULT_LIMIT = 100
 MAX_LIMIT = 100
 MAX_MACHINE_OPTIONS = 50
 #: How many older records the history endpoint returns for one position.
@@ -254,6 +255,9 @@ class TireRepository:
         if date_to is not None:
             filters.append(TireChangeModel.change_date <= date_to)
 
+        # "Hurda" (scrapped) machines stay in the database but are never listed.
+        filters.append(exclude_scrap_machines())
+
         if filters:
             query = query.where(*filters)
 
@@ -298,6 +302,9 @@ class TireRepository:
             AllMachineModel,
             CarStatusModel.name.label("status_name"),
         ).outerjoin(CarStatusModel, AllMachineModel.status_id == CarStatusModel.id)
+
+        # Scrapped machines can not receive new tire records.
+        query = query.where(exclude_scrap_machines())
 
         if search:
             pattern = f"%{search.strip()}%"

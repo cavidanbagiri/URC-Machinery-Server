@@ -20,6 +20,7 @@ from models.forum_model import (
 )
 from models.machines_model import AllMachineModel, CarStatusModel
 from models.user_model import UserModel
+from repositories.car_status_lookup import exclude_scrap_machines
 from schemas.forum_schemas import (
     MAX_MACHINE_OPTIONS,
     ForumCommentCreateSchema,
@@ -28,8 +29,8 @@ from schemas.forum_schemas import (
 )
 from services.storage_service import resolve_content_type
 
-DEFAULT_LIMIT = 10
-MAX_LIMIT = 50
+DEFAULT_LIMIT = 100
+MAX_LIMIT = 100
 
 #: ``status`` query values: everything, only open or only resolved topics.
 STATUS_FILTERS = ("all", "open", "resolved")
@@ -511,6 +512,9 @@ class ForumRepository:
             .select_from(AllMachineModel)
             .outerjoin(CarStatusModel, AllMachineModel.status_id == CarStatusModel.id)
         )
+
+        # Scrapped machines are not offered for new forum topics.
+        query = query.where(exclude_scrap_machines())
 
         term = (search or "").strip()
         if term:

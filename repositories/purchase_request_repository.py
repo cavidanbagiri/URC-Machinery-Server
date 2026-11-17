@@ -22,6 +22,7 @@ from models.purchase_request_model import (
 )
 from models.user_model import UserModel
 from models.warehouse_model import WarehouseMovementModel
+from repositories.car_status_lookup import exclude_scrap_machines
 from repositories.pdf_documents import validate_document
 from schemas.purchase_request_schemas import (
     ServiceRequestCreateSchema,
@@ -29,7 +30,7 @@ from schemas.purchase_request_schemas import (
     SparePartRequestUpdateSchema,
 )
 
-DEFAULT_LIMIT = 20
+DEFAULT_LIMIT = 100
 MAX_LIMIT = 100
 MAX_MACHINE_OPTIONS = 50
 
@@ -474,6 +475,9 @@ class PurchaseRequestRepository:
                     AllMachineModel.vin_no.ilike(pattern),
                 )
             )
+
+        # Scrapped machines can not receive new purchase requests.
+        query = query.where(exclude_scrap_machines())
 
         result = await self.db.execute(
             query.order_by(AllMachineModel.identification_no.asc()).limit(limit)

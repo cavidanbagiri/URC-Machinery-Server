@@ -33,7 +33,7 @@ router = APIRouter(dependencies=[Depends(get_current_user)])
 @router.get("/fetch_tires", response_model=PaginatedTireChangeSchema)
 async def fetch_tires(
     db: Annotated[AsyncSession, Depends(get_db)],
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(100, ge=1, le=100),
     offset: int = Query(0, ge=0),
     search: Optional[str] = Query(None, max_length=100),
     position: Optional[str] = Query(None, max_length=50),
