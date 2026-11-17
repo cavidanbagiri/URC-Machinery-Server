@@ -5,7 +5,7 @@ from datetime import date
 from typing import Any, Optional
 
 from fastapi import HTTPException
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -138,6 +138,7 @@ class TireRepository:
             "position": change.position,
             "brand_model": change.brand_model,
             "size": change.size,
+            "serial_no": change.serial_no,
             "change_reason": change.change_reason,
             "change_date": change.change_date,
             "km_hour": change.km_hour,
@@ -242,6 +243,7 @@ class TireRepository:
                     TireChangeModel.position.ilike(pattern),
                     TireChangeModel.brand_model.ilike(pattern),
                     TireChangeModel.size.ilike(pattern),
+                    TireChangeModel.serial_no.ilike(pattern),
                     TireChangeModel.change_reason.ilike(pattern),
                     TireChangeModel.km_hour.ilike(pattern),
                 )
@@ -292,6 +294,33 @@ class TireRepository:
             "offset": offset,
             "items": items[offset : offset + limit],
         }
+
+    async def get_summary(self) -> dict[str, int]:
+        """Counters for the summary cards shown above the list.
+
+        Both counters use the same machine scope as the table (scrapped
+        machines are hidden), so ``total`` equals the unfiltered list total.
+        ``changed_today`` reads ``change_date`` rather than ``created_at``: the
+        form lets the user backdate a replacement.
+        """
+
+        today = date.today()
+        result = await self.db.execute(
+            select(
+                func.count(TireChangeModel.id).label("total"),
+                func.count(
+                    case((TireChangeModel.change_date == today, TireChangeModel.id))
+                ).label("changed_today"),
+            )
+            .select_from(TireChangeModel)
+            .join(
+                AllMachineModel,
+                TireChangeModel.machine_id == AllMachineModel.id,
+            )
+            .where(exclude_scrap_machines())
+        )
+        total, changed_today = result.one()
+        return {"total": total or 0, "changed_today": changed_today or 0}
 
     async def get_machine_options(
         self, *, search: Optional[str] = None, limit: int = 20
@@ -398,6 +427,7 @@ class TireRepository:
             position=normalize_position(data.position),
             brand_model=data.brand_model,
             size=data.size,
+            serial_no=data.serial_no,
             change_reason=data.change_reason,
             km_hour=data.km_hour,
             change_date=data.change_date or date.today(),

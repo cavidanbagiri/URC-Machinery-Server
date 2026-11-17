@@ -19,6 +19,7 @@ from schemas.tire_schemas import (
     TireChangeCreateSchema,
     TireChangeItemSchema,
     TireMachineOptionSchema,
+    TireSummarySchema,
 )
 
 # Every endpoint requires a valid access token. Write endpoints also enforce
@@ -56,6 +57,22 @@ async def fetch_tires(
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Lastik listesi getirilemedi: {e}"
+        )
+
+
+@router.get("/summary", response_model=TireSummarySchema)
+async def fetch_tire_summary(
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Counters for the cards above the table (total / changed today)."""
+
+    try:
+        return await TireRepository(db).get_summary()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Lastik özeti getirilemedi: {e}"
         )
 
 

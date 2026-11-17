@@ -18,6 +18,8 @@ MAX_POSITION_LENGTH = 50
 MAX_BRAND_MODEL_LENGTH = 150
 #: "Lastik ebadı", e.g. "315/80 R22.5" or "12.00 R20".
 MAX_SIZE_LENGTH = 50
+#: "Lastik seri no", e.g. "DOT 3524 ABC123" or a manufacturer serial.
+MAX_SERIAL_NO_LENGTH = 100
 #: "Motor saati / KM" is free text, e.g. "12 450 km" or "350 saat".
 MAX_KM_HOUR_LENGTH = 50
 MAX_REASON_LENGTH = 1000
@@ -51,6 +53,7 @@ class TireChangeCreateSchema(BaseModel):
 
     brand_model: Optional[str] = Field(None, max_length=MAX_BRAND_MODEL_LENGTH)
     size: Optional[str] = Field(None, max_length=MAX_SIZE_LENGTH)
+    serial_no: Optional[str] = Field(None, max_length=MAX_SERIAL_NO_LENGTH)
     change_reason: Optional[str] = Field(None, max_length=MAX_REASON_LENGTH)
     km_hour: Optional[str] = Field(None, max_length=MAX_KM_HOUR_LENGTH)
 
@@ -62,7 +65,7 @@ class TireChangeCreateSchema(BaseModel):
     def validate_position(cls, value: str) -> str:
         return normalize_position(value)
 
-    @field_validator("brand_model", "size", "change_reason", "km_hour")
+    @field_validator("brand_model", "size", "serial_no", "change_reason", "km_hour")
     @classmethod
     def normalize_text(cls, value: Optional[str]) -> Optional[str]:
         return _clean_optional_text(value)
@@ -110,6 +113,7 @@ class TireChangeItemSchema(BaseModel):
     position: str
     brand_model: Optional[str] = None
     size: Optional[str] = None
+    serial_no: Optional[str] = None
     change_reason: Optional[str] = None
     change_date: date
     km_hour: Optional[str] = None
@@ -132,6 +136,15 @@ class PaginatedTireChangeSchema(BaseModel):
     items: list[TireChangeItemSchema]
 
 
+class TireSummarySchema(BaseModel):
+    """Counters for the two cards above the tire table."""
+
+    #: Every stored change (same machine scope as the unfiltered list).
+    total: int = 0
+    #: Changes whose ``change_date`` is today, not when the row was typed.
+    changed_today: int = 0
+
+
 class TireMachineOptionSchema(BaseModel):
     id: int
     identification_no: Optional[str] = None
@@ -146,11 +159,13 @@ __all__ = [
     "MAX_KM_HOUR_LENGTH",
     "MAX_POSITION_LENGTH",
     "MAX_REASON_LENGTH",
+    "MAX_SERIAL_NO_LENGTH",
     "MAX_SIZE_LENGTH",
     "PaginatedTireChangeSchema",
     "TireChangeCreateSchema",
     "TireChangeDocumentSchema",
     "TireChangeItemSchema",
     "TireMachineOptionSchema",
+    "TireSummarySchema",
     "normalize_position",
 ]

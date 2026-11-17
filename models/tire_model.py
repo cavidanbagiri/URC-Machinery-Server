@@ -6,9 +6,10 @@ Each change keeps who changed it, why, on which date and at which counter
 reading, so the same position can be followed over time: the API exposes the
 previous records of a machine + position as the "eski kayıtlar" history.
 
-``brand_model``, ``size`` and ``change_reason`` are operator-typed free text
-because every fleet buys different brands and sizes. ``km_hour`` keeps whatever
-the operator wrote ("12 450 km", "350 saat", ...), exactly like daily faults.
+``brand_model``, ``size``, ``serial_no`` and ``change_reason`` are
+operator-typed free text because every fleet buys different brands and sizes.
+``km_hour`` keeps whatever the operator wrote ("12 450 km", "350 saat", ...),
+exactly like daily faults.
 
 Each change may own several PDF documents (delivery note, invoice, work order).
 The bytes live in PostgreSQL because the API host (Render) has an ephemeral
@@ -55,6 +56,9 @@ class TireChangeModel(Base):
 
     brand_model = Column(String(150), nullable=True)
     size = Column(String(50), nullable=True)
+    # "Lastik seri no" — optional; records created before this field existed
+    # stay NULL until an operator fills them in.
+    serial_no = Column(String(100), nullable=True)
     change_reason = Column(Text, nullable=True)
 
     change_date = Column(

@@ -21,7 +21,11 @@ from repositories.tire_repository import (
     position_matches,
     sanitize_file_name,
 )
-from schemas.tire_schemas import TireChangeCreateSchema, normalize_position
+from schemas.tire_schemas import (
+    TireChangeCreateSchema,
+    TireSummarySchema,
+    normalize_position,
+)
 
 
 PDF_BYTES = b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
@@ -33,6 +37,7 @@ def payload(**overrides):
         "position": "Sol Ön",
         "brand_model": "Michelin XZL",
         "size": "315/80 R22.5",
+        "serial_no": "DOT 3524 ABC123",
         "change_reason": "Patladı",
         "km_hour": "12 450 km",
         "change_date": date.today(),
@@ -50,9 +55,21 @@ class TireChangeCreateSchemaTests(unittest.TestCase):
         self.assertEqual(parsed.change_reason, "Patladı")
 
     def test_blank_optional_text_becomes_none(self):
-        parsed = TireChangeCreateSchema(**payload(brand_model="   ", size=""))
+        parsed = TireChangeCreateSchema(
+            **payload(brand_model="   ", size="", serial_no="  ")
+        )
         self.assertIsNone(parsed.brand_model)
         self.assertIsNone(parsed.size)
+        self.assertIsNone(parsed.serial_no)
+
+    def test_serial_no_is_trimmed(self):
+        parsed = TireChangeCreateSchema(**payload(serial_no="  SN-2024/17  "))
+        self.assertEqual(parsed.serial_no, "SN-2024/17")
+
+    def test_serial_no_may_be_omitted(self):
+        data = payload()
+        data.pop("serial_no")
+        self.assertIsNone(TireChangeCreateSchema(**data).serial_no)
 
     def test_blank_position_is_rejected(self):
         with self.assertRaises(ValidationError):
@@ -65,6 +82,10 @@ class TireChangeCreateSchemaTests(unittest.TestCase):
     def test_brand_model_length_is_limited(self):
         with self.assertRaises(ValidationError):
             TireChangeCreateSchema(**payload(brand_model="M" * 151))
+
+    def test_serial_no_length_is_limited(self):
+        with self.assertRaises(ValidationError):
+            TireChangeCreateSchema(**payload(serial_no="S" * 101))
 
     def test_reason_length_is_limited(self):
         with self.assertRaises(ValidationError):
@@ -87,6 +108,18 @@ class TireChangeCreateSchemaTests(unittest.TestCase):
     def test_unknown_fields_are_rejected(self):
         with self.assertRaises(ValidationError):
             TireChangeCreateSchema(**payload(previous_count=2))
+
+
+class TireSummarySchemaTests(unittest.TestCase):
+    def test_defaults_are_zero(self):
+        summary = TireSummarySchema()
+        self.assertEqual(summary.total, 0)
+        self.assertEqual(summary.changed_today, 0)
+
+    def test_accepts_counters(self):
+        summary = TireSummarySchema(total=42, changed_today=3)
+        self.assertEqual(summary.total, 42)
+        self.assertEqual(summary.changed_today, 3)
 
 
 class PositionHelperTests(unittest.TestCase):
