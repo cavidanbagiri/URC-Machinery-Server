@@ -191,6 +191,15 @@ class AllMachineModel(Base):
         order_by="DailyFaultModel.fault_date.desc()",
     )
 
+    # Daily KM / engine-hour readings (models/meter_log_model.py)
+    meter_logs = relationship(
+        "MachineMeterLogModel",
+        back_populates="machine",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="MachineMeterLogModel.log_date.desc()",
+    )
+
     # Machine photos (models/machine_photo_model.py)
     photos = relationship(
         "MachinePhotoModel",
@@ -253,6 +262,7 @@ from models.daily_fault_model import (  # noqa: E402,F401
     DailyFaultDocumentModel,
     DailyFaultModel,
 )
+from models.meter_log_model import MachineMeterLogModel  # noqa: E402,F401
 from models.purchase_request_model import (  # noqa: E402,F401
     ServiceRequestModel,
     SparePartRequestItemModel,

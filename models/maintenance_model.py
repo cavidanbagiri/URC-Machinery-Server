@@ -15,6 +15,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     Text,
 )
@@ -22,6 +23,11 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from db.base import Base
+
+
+#: Hard limit for one maintenance PDF, mirrored by the document table's
+#: ``file_size`` check constraint.
+MAX_MAINTENANCE_DOCUMENT_BYTES = 10 * 1024 * 1024
 
 
 class MachineMaintenanceSettingModel(Base):
@@ -146,9 +152,70 @@ class MaintenanceRecordModel(Base):
 
     machine = relationship("AllMachineModel", back_populates="maintenance_records")
     created_by = relationship("UserModel")
+    documents = relationship(
+        "MaintenanceDocumentModel",
+        back_populates="record",
+        cascade="all, delete-orphan",
+    )
+
+
+class MaintenanceDocumentModel(Base):
+    """A PDF paper attached to one completed maintenance.
+
+    The bytes live in PostgreSQL because the API host has an ephemeral
+    filesystem. List responses only expose the metadata below; the file itself
+    is streamed by ``GET /maintenance/documents/{document_id}``.
+    """
+
+    __tablename__ = "maintenance_documents"
+
+    __table_args__ = (
+        CheckConstraint(
+            "file_size > 0",
+            name="ck_maintenance_documents_size_positive",
+        ),
+        CheckConstraint(
+            f"file_size <= {MAX_MAINTENANCE_DOCUMENT_BYTES}",
+            name="ck_maintenance_documents_size_limit",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    record_id = Column(
+        Integer,
+        ForeignKey("maintenance_records.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    file_name = Column(String(255), nullable=False)
+    content_type = Column(String(100), nullable=False, default="application/pdf")
+    file_size = Column(Integer, nullable=False)
+    file_data = Column(LargeBinary, nullable=False)
+
+    uploaded_by_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    record = relationship("MaintenanceRecordModel", back_populates="documents")
+    uploaded_by = relationship("UserModel")
+
+    def __str__(self) -> str:
+        return self.file_name
 
 
 __all__ = [
+    "MAX_MAINTENANCE_DOCUMENT_BYTES",
     "MachineMaintenanceSettingModel",
+    "MaintenanceDocumentModel",
     "MaintenanceRecordModel",
 ]

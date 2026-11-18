@@ -1,7 +1,18 @@
 # routers/maintenance_router.py
+from datetime import date
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+)
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.setup import get_db
@@ -9,6 +20,7 @@ from dependencies.auth import get_current_user
 from dependencies.permissions import require_write_permission
 from models.user_model import UserModel
 from repositories.maintenance_repository import MaintenanceRepository
+from repositories.pdf_documents import content_disposition
 from schemas.maintenance_schemas import (
     MaintenanceCompleteSchema,
     MaintenanceFetchItemSchema,
@@ -125,6 +137,32 @@ async def fetch_maintenance_history(
         raise HTTPException(status_code=500, detail=f"Bakım geçmişi getirilemedi: {e}")
 
 
+@router.get("/documents/{document_id}")
+async def fetch_maintenance_document(
+    document_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    download: bool = Query(False),
+):
+    """Stream a maintenance PDF; ``download=true`` forces the save dialog."""
+
+    try:
+        document = await MaintenanceRepository(db).get_document(document_id)
+        return Response(
+            content=document.file_data,
+            media_type=document.content_type or "application/pdf",
+            headers={
+                "Content-Disposition": content_disposition(
+                    document.file_name, download=download
+                ),
+                "Cache-Control": "private, no-store",
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Evrak açılamadı: {e}")
+
+
 # =========================================================
 # WRITE
 # =========================================================
@@ -175,18 +213,29 @@ async def add_maintenance_reading(
 )
 async def complete_maintenance(
     machine_id: int,
-    data: MaintenanceCompleteSchema,
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[UserModel, Depends(require_write_permission)],
+    file: Annotated[UploadFile, File(description="Bakım evrakı (PDF, zorunlu)")],
+    maintenance_date: Optional[date] = Form(None),
+    counter_value: Optional[float] = Form(None, ge=0),
+    notes: Optional[str] = Form(None, max_length=2000),
 ):
     try:
+        data = MaintenanceCompleteSchema(
+            maintenance_date=maintenance_date,
+            counter_value=counter_value,
+            notes=notes,
+        )
         return await MaintenanceRepository(db).complete_maintenance(
             machine_id,
             data,
             current_user.id,
+            document=(file.filename, file.content_type, await file.read()),
         )
     except HTTPException:
         raise
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=e.errors()) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Bakım tamamlanamadı: {e}")
 

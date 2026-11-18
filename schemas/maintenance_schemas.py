@@ -145,11 +145,30 @@ class MaintenanceSummarySchema(BaseModel):
     planned: int
     unplanned: int
     inactive: int
+    # Completed maintenance events (maintenance_records.record_type == "maintenance").
+    completed: int = 0
+    completed_today: int = 0
     overdue: int
     due_soon: int
     needs_attention: int
     by_status: list[MaintenanceSummaryStatusSchema]
     usage_units: list[MaintenanceUsageUnitSchema]
+
+
+class MaintenanceDocumentSchema(BaseModel):
+    """Metadata of a PDF attached to a maintenance record (never the bytes)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    record_id: int
+    file_name: str
+    content_type: str = "application/pdf"
+    file_size: int = 0
+
+    uploaded_by_id: Optional[int] = None
+    uploaded_by_name: Optional[str] = None
+    created_at: Optional[datetime] = None
 
 
 class MaintenanceHistoryItemSchema(BaseModel):
@@ -166,3 +185,4 @@ class MaintenanceHistoryItemSchema(BaseModel):
     created_by_id: Optional[int] = None
     created_by_name: Optional[str] = None
     created_at: Optional[datetime] = None
+    documents: list[MaintenanceDocumentSchema] = Field(default_factory=list)

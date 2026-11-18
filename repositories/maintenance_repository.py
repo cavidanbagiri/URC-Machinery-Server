@@ -5,7 +5,7 @@ from datetime import date
 from typing import Any, Optional
 
 from fastapi import HTTPException
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,11 +18,14 @@ from models.machines_model import (
     TypeTransportModel,
 )
 from models.maintenance_model import (
+    MAX_MAINTENANCE_DOCUMENT_BYTES,
     MachineMaintenanceSettingModel,
+    MaintenanceDocumentModel,
     MaintenanceRecordModel,
 )
 from models.user_model import UserModel
 from repositories.car_status_lookup import exclude_scrap_machines
+from repositories.pdf_documents import validate_document
 from schemas.maintenance_schemas import (
     MaintenanceCompleteSchema,
     MaintenanceReadingCreateSchema,
@@ -445,6 +448,27 @@ class MaintenanceRepository:
 
     async def get_summary(self) -> dict[str, Any]:
         items = await self._fetch_items(include_inactive=True)
+        today = date.today()
+
+        # Completed maintenance history: the page shows how many maintenance
+        # operations were finished in total and today. Readings are ignored.
+        completed = (
+            await self.db.scalar(
+                select(func.count())
+                .select_from(MaintenanceRecordModel)
+                .where(MaintenanceRecordModel.record_type == "maintenance")
+            )
+        ) or 0
+        completed_today = (
+            await self.db.scalar(
+                select(func.count())
+                .select_from(MaintenanceRecordModel)
+                .where(
+                    MaintenanceRecordModel.record_type == "maintenance",
+                    MaintenanceRecordModel.record_date == today,
+                )
+            )
+        ) or 0
 
         counts = {code: 0 for code in STATUS_ORDER}
         for item in items:
@@ -470,6 +494,8 @@ class MaintenanceRepository:
             "inactive": sum(
                 1 for item in items if item["has_plan"] and not item["is_active"]
             ),
+            "completed": int(completed),
+            "completed_today": int(completed_today),
             "overdue": counts["gecikmis"],
             "due_soon": counts["yaklasiyor"],
             "needs_attention": (
@@ -520,8 +546,13 @@ class MaintenanceRepository:
             .limit(limit)
         )
 
+        rows = result.all()
+        documents_by_record = await self._get_documents_by_record(
+            [record.id for record, _, _ in rows]
+        )
+
         records = []
-        for record, firstname, lastname in result.all():
+        for record, firstname, lastname in rows:
             name = " ".join(part for part in (firstname, lastname) if part).strip()
             records.append(
                 {
@@ -536,9 +567,58 @@ class MaintenanceRepository:
                     "created_by_id": record.created_by_id,
                     "created_by_name": name or None,
                     "created_at": record.created_at,
+                    "documents": documents_by_record.get(record.id, []),
                 }
             )
         return records
+
+    async def _get_documents_by_record(
+        self, record_ids: list[int]
+    ) -> dict[int, list[dict[str, Any]]]:
+        """Load the PDF metadata of the history rows in one query (no bytes)."""
+
+        if not record_ids:
+            return {}
+
+        result = await self.db.execute(
+            select(
+                MaintenanceDocumentModel,
+                UserModel.firstname,
+                UserModel.lastname,
+            )
+            .outerjoin(
+                UserModel,
+                MaintenanceDocumentModel.uploaded_by_id == UserModel.id,
+            )
+            .where(MaintenanceDocumentModel.record_id.in_(record_ids))
+            .order_by(
+                MaintenanceDocumentModel.record_id.asc(),
+                MaintenanceDocumentModel.id.asc(),
+            )
+        )
+
+        grouped: dict[int, list[dict[str, Any]]] = {}
+        for document, firstname, lastname in result.all():
+            name = " ".join(part for part in (firstname, lastname) if part).strip()
+            grouped.setdefault(document.record_id, []).append(
+                {
+                    "id": document.id,
+                    "record_id": document.record_id,
+                    "file_name": document.file_name,
+                    "content_type": document.content_type,
+                    "file_size": document.file_size,
+                    "uploaded_by_id": document.uploaded_by_id,
+                    "uploaded_by_name": name or None,
+                    "created_at": document.created_at,
+                }
+            )
+        return grouped
+
+    async def get_document(self, document_id: int) -> MaintenanceDocumentModel:
+        document = await self.db.get(MaintenanceDocumentModel, document_id)
+        if document is None:
+            raise HTTPException(status_code=404, detail="Evrak bulunamadı")
+        return document
 
     # ---------- WRITE ----------
 
@@ -647,7 +727,28 @@ class MaintenanceRepository:
         machine_id: int,
         data: MaintenanceCompleteSchema,
         created_by_id: int | None,
+        *,
+        document: tuple[Optional[str], Optional[str], bytes] | None = None,
     ) -> dict[str, Any]:
+        # Every completed maintenance must carry its PDF paper. The file is
+        # validated before the plan/record are touched and stored in the same
+        # transaction, so a rejected upload cannot complete the maintenance.
+        if document is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Bakımı tamamlamak için PDF evrak yüklemelisiniz",
+            )
+
+        try:
+            file_info = validate_document(
+                document[0],
+                document[1],
+                document[2],
+                max_bytes=MAX_MAINTENANCE_DOCUMENT_BYTES,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
         setting = await self._require_setting(machine_id)
         if not setting.is_active:
             raise HTTPException(
@@ -681,20 +782,31 @@ class MaintenanceRepository:
         setting.current_counter = counter
         setting.current_counter_date = maintenance_date
 
-        self.db.add(
-            MaintenanceRecordModel(
-                machine_id=machine_id,
-                record_type="maintenance",
-                record_date=maintenance_date,
-                counter_value=counter,
-                usage_unit=setting.usage_unit,
-                interval_value=setting.interval_value,
-                notes=data.notes,
-                created_by_id=created_by_id,
-            )
+        record = MaintenanceRecordModel(
+            machine_id=machine_id,
+            record_type="maintenance",
+            record_date=maintenance_date,
+            counter_value=counter,
+            usage_unit=setting.usage_unit,
+            interval_value=setting.interval_value,
+            notes=data.notes,
+            created_by_id=created_by_id,
         )
 
         try:
+            self.db.add(record)
+            # Flush first so the document can reference the new record id.
+            await self.db.flush()
+            self.db.add(
+                MaintenanceDocumentModel(
+                    record_id=record.id,
+                    file_name=file_info["file_name"],
+                    content_type=file_info["content_type"],
+                    file_size=file_info["file_size"],
+                    file_data=document[2],
+                    uploaded_by_id=created_by_id,
+                )
+            )
             await self.db.commit()
         except Exception:
             await self.db.rollback()

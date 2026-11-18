@@ -8,6 +8,7 @@ do not connect to PostgreSQL.
 """
 
 import unittest
+from datetime import date
 
 from pydantic import ValidationError
 
@@ -20,6 +21,8 @@ from repositories.maintenance_repository import (
 )
 from schemas.maintenance_schemas import (
     MaintenanceCompleteSchema,
+    MaintenanceDocumentSchema,
+    MaintenanceHistoryItemSchema,
     MaintenanceReadingCreateSchema,
     MaintenanceSettingUpdateSchema,
 )
@@ -277,6 +280,39 @@ class MaintenanceSchemaTests(unittest.TestCase):
 
         with self.assertRaises(ValidationError):
             MaintenanceCompleteSchema(counter_value=-1)
+
+    def test_history_item_defaults_to_empty_documents(self):
+        item = MaintenanceHistoryItemSchema(
+            id=1,
+            machine_id=2,
+            record_type="maintenance",
+            record_date=date(2026, 11, 17),
+        )
+
+        self.assertEqual(item.documents, [])
+
+    def test_document_schema_exposes_metadata_only(self):
+        document = MaintenanceDocumentSchema(
+            id=5,
+            record_id=10,
+            file_name="bakim.pdf",
+            file_size=2048,
+        )
+
+        self.assertEqual(document.content_type, "application/pdf")
+        self.assertEqual(document.file_size, 2048)
+        self.assertNotIn("file_data", MaintenanceDocumentSchema.model_fields)
+
+    def test_complete_requires_a_pdf_document(self):
+        from inspect import signature
+
+        from repositories.maintenance_repository import MaintenanceRepository
+
+        parameters = signature(
+            MaintenanceRepository.complete_maintenance
+        ).parameters
+        self.assertIn("document", parameters)
+        self.assertIsNone(parameters["document"].default)
 
 
 class MaintenanceColumnFilterTests(unittest.TestCase):
