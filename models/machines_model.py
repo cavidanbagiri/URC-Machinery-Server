@@ -200,6 +200,15 @@ class AllMachineModel(Base):
         order_by="MachineMeterLogModel.log_date.desc()",
     )
 
+    # Diesel distribution records (models/fuel_log_model.py)
+    fuel_logs = relationship(
+        "MachineFuelLogModel",
+        back_populates="machine",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="MachineFuelLogModel.fuel_date.desc()",
+    )
+
     # Machine photos (models/machine_photo_model.py)
     photos = relationship(
         "MachinePhotoModel",
@@ -263,6 +272,7 @@ from models.daily_fault_model import (  # noqa: E402,F401
     DailyFaultModel,
 )
 from models.meter_log_model import MachineMeterLogModel  # noqa: E402,F401
+from models.fuel_log_model import MachineFuelLogModel  # noqa: E402,F401
 from models.purchase_request_model import (  # noqa: E402,F401
     ServiceRequestModel,
     SparePartRequestItemModel,
