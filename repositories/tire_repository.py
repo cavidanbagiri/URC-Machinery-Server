@@ -23,6 +23,7 @@ from models.tire_model import (
 )
 from models.user_model import UserModel
 from repositories.car_status_lookup import exclude_scrap_machines
+from repositories.meter_log_lookup import latest_meter_log_subquery
 from repositories.pdf_documents import (
     clamp_pagination,
     content_disposition,
@@ -327,10 +328,24 @@ class TireRepository:
     ) -> list[dict[str, Any]]:
         limit = max(1, min(limit, MAX_MACHINE_OPTIONS))
 
-        query = select(
-            AllMachineModel,
-            CarStatusModel.name.label("status_name"),
-        ).outerjoin(CarStatusModel, AllMachineModel.status_id == CarStatusModel.id)
+        latest = latest_meter_log_subquery()
+        query = (
+            select(
+                AllMachineModel,
+                CarStatusModel.name.label("status_name"),
+                latest.c.last_km,
+                latest.c.last_engine_hours,
+                latest.c.last_log_date,
+            )
+            .outerjoin(CarStatusModel, AllMachineModel.status_id == CarStatusModel.id)
+            .outerjoin(
+                latest,
+                and_(
+                    latest.c.machine_id == AllMachineModel.id,
+                    latest.c.row_number == 1,
+                ),
+            )
+        )
 
         # Scrapped machines can not receive new tire records.
         query = query.where(exclude_scrap_machines())
@@ -356,8 +371,21 @@ class TireRepository:
                 "vin_no": machine.vin_no,
                 "status_id": machine.status_id,
                 "status_name": status_name,
+                "last_km": float(last_km) if last_km is not None else None,
+                "last_engine_hours": (
+                    float(last_engine_hours)
+                    if last_engine_hours is not None
+                    else None
+                ),
+                "last_log_date": last_log_date,
             }
-            for machine, status_name in result.all()
+            for (
+                machine,
+                status_name,
+                last_km,
+                last_engine_hours,
+                last_log_date,
+            ) in result.all()
         ]
 
     async def get_history(

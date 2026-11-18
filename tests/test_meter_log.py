@@ -15,8 +15,11 @@ from types import SimpleNamespace
 from pydantic import ValidationError
 
 from models.meter_log_model import MachineMeterLogModel
+from repositories.meter_log_lookup import latest_meter_log_subquery
 from repositories.meter_log_repository import MAX_OVERVIEW_DAYS, MeterLogRepository
 from schemas.meter_log_schemas import MeterLogCreateSchema, MeterLogEntrySchema
+from schemas.repair_schemas import RepairMachineOptionSchema
+from schemas.tire_schemas import TireMachineOptionSchema
 
 
 class MeterLogSchemaTests(unittest.TestCase):
@@ -63,6 +66,37 @@ class MeterLogSchemaTests(unittest.TestCase):
 
 
 class MeterLogWindowTests(unittest.TestCase):
+    def test_latest_subquery_exposes_snapshot_columns(self):
+        latest = latest_meter_log_subquery()
+
+        self.assertEqual(
+            set(latest.c.keys()),
+            {
+                "machine_id",
+                "last_km",
+                "last_engine_hours",
+                "last_log_date",
+                "last_logged_at",
+                "row_number",
+            },
+        )
+
+    def test_machine_picker_schemas_accept_snapshot(self):
+        snapshot = {
+            "id": 12,
+            "identification_no": "1042",
+            "last_km": 12345.5,
+            "last_engine_hours": 987.25,
+            "last_log_date": date(2026, 11, 17),
+        }
+
+        for schema in (RepairMachineOptionSchema, TireMachineOptionSchema):
+            with self.subTest(schema=schema.__name__):
+                parsed = schema(**snapshot)
+                self.assertEqual(parsed.last_km, 12345.5)
+                self.assertEqual(parsed.last_engine_hours, 987.25)
+                self.assertEqual(parsed.last_log_date, date(2026, 11, 17))
+
     def test_window_ends_on_selected_day_and_is_inclusive(self):
         start, end = MeterLogRepository._resolve_window(
             days=7,

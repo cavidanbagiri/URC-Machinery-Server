@@ -81,5 +81,23 @@ class ScrapFilteredPickerTests(unittest.TestCase):
                 self.assertIn(SCRAP_CALL, getsource(method))
 
 
+class MachinePickerMeterSnapshotTests(unittest.TestCase):
+    """Repair and tire pickers carry the newest KM / engine-hour reading."""
+
+    def test_repair_and_tire_pickers_join_latest_meter_log(self):
+        pickers = {
+            "repair": RepairRepository.get_machine_options,
+            "tire": TireRepository.get_machine_options,
+        }
+
+        for label, method in pickers.items():
+            with self.subTest(module=label):
+                source = getsource(method)
+                self.assertIn("latest_meter_log_subquery()", source)
+                self.assertIn("latest.c.last_km", source)
+                self.assertIn("latest.c.last_engine_hours", source)
+                self.assertIn("latest.c.last_log_date", source)
+
+
 if __name__ == "__main__":
     unittest.main()

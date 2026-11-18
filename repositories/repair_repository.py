@@ -5,7 +5,7 @@ from datetime import date, timedelta
 from typing import Any, Optional
 
 from fastapi import HTTPException
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +31,7 @@ from repositories.car_status_lookup import (
     exclude_scrap_machines,
     resolve_repair_status,
 )
+from repositories.meter_log_lookup import latest_meter_log_subquery
 from repositories.pdf_documents import validate_document
 from schemas.repair_schemas import (
     RepairCancelSchema,
@@ -775,9 +776,23 @@ class RepairRepository:
         active_machine_ids = select(RepairRecordModel.machine_id).where(
             RepairRecordModel.status == ACTIVE_REPAIR_STATUS
         )
+        latest = latest_meter_log_subquery()
         query = (
-            select(AllMachineModel, CarStatusModel.name.label("status_name"))
+            select(
+                AllMachineModel,
+                CarStatusModel.name.label("status_name"),
+                latest.c.last_km,
+                latest.c.last_engine_hours,
+                latest.c.last_log_date,
+            )
             .outerjoin(CarStatusModel, AllMachineModel.status_id == CarStatusModel.id)
+            .outerjoin(
+                latest,
+                and_(
+                    latest.c.machine_id == AllMachineModel.id,
+                    latest.c.row_number == 1,
+                ),
+            )
             .where(
                 AllMachineModel.id.not_in(active_machine_ids),
                 # Scrapped machines can not be taken into repair again.
@@ -805,8 +820,21 @@ class RepairRepository:
                 "vin_no": machine.vin_no,
                 "status_id": machine.status_id,
                 "status_name": status_name,
+                "last_km": float(last_km) if last_km is not None else None,
+                "last_engine_hours": (
+                    float(last_engine_hours)
+                    if last_engine_hours is not None
+                    else None
+                ),
+                "last_log_date": last_log_date,
             }
-            for machine, status_name in result.all()
+            for (
+                machine,
+                status_name,
+                last_km,
+                last_engine_hours,
+                last_log_date,
+            ) in result.all()
         ]
 
     async def get_estimate(self, repair_type_id: int) -> dict[str, Any]:

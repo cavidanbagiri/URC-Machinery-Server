@@ -274,6 +274,12 @@ class RepairMachineOptionSchema(BaseModel):
     status_id: Optional[int] = None
     status_name: Optional[str] = None
 
+    # Newest KM / engine-hour reading of the machine.  The new-repair form
+    # shows this snapshot under the selected machine.
+    last_km: Optional[float] = None
+    last_engine_hours: Optional[float] = None
+    last_log_date: Optional[date] = None
+
 
 class RepairEstimateSchema(BaseModel):
     repair_type_id: int

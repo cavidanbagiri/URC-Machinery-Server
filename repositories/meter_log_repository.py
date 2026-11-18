@@ -11,7 +11,7 @@ from datetime import date, timedelta
 from typing import Optional
 
 from fastapi import HTTPException
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.machines_model import (
@@ -27,6 +27,7 @@ from models.machines_model import (
 from models.meter_log_model import MachineMeterLogModel
 from models.user_model import UserModel
 from repositories.car_status_lookup import exclude_scrap_machines
+from repositories.meter_log_lookup import latest_meter_log_subquery
 from schemas.meter_log_schemas import MeterLogCreateSchema
 
 MAX_OVERVIEW_DAYS = 31
@@ -84,28 +85,9 @@ class MeterLogRepository:
     ) -> dict:
         start_date, window_end = self._resolve_window(days, end_date)
 
-        # One row per machine = its newest reading across all history.  A
-        # window function is used instead of N+1 queries or loading the whole
-        # history into memory.
-        row_number = func.row_number().over(
-            partition_by=MachineMeterLogModel.machine_id,
-            order_by=[
-                MachineMeterLogModel.log_date.desc(),
-                MachineMeterLogModel.created_at.desc(),
-                MachineMeterLogModel.id.desc(),
-            ],
-        ).label("row_number")
-
-        latest = (
-            select(
-                MachineMeterLogModel.machine_id.label("machine_id"),
-                MachineMeterLogModel.km.label("last_km"),
-                MachineMeterLogModel.engine_hours.label("last_engine_hours"),
-                MachineMeterLogModel.log_date.label("last_log_date"),
-                MachineMeterLogModel.created_at.label("last_logged_at"),
-                row_number,
-            ).subquery()
-        )
+        # One row per machine = its newest reading across all history.  The
+        # shared subquery keeps the repair/tire pickers in sync with this page.
+        latest = latest_meter_log_subquery()
 
         filters = [exclude_scrap_machines()]
 

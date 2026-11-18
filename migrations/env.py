@@ -27,6 +27,7 @@ import models.maintenance_model  # noqa: E402,F401
 import models.meter_log_model  # noqa: E402,F401
 import models.purchase_request_model  # noqa: E402,F401
 import models.repair_model  # noqa: E402,F401
+import models.stock_model  # noqa: E402,F401
 import models.tire_model  # noqa: E402,F401
 import models.user_model  # noqa: E402,F401
 import models.warehouse_model  # noqa: E402,F401
