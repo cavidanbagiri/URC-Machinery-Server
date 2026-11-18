@@ -26,6 +26,7 @@ from schemas.maintenance_schemas import (
     MaintenanceFetchItemSchema,
     MaintenanceHistoryItemSchema,
     MaintenanceReadingCreateSchema,
+    MaintenanceRecordType,
     MaintenanceSettingUpdateSchema,
     MaintenanceSortField,
     MaintenanceSortOrder,
@@ -124,12 +125,14 @@ async def fetch_maintenance_history(
     db: Annotated[AsyncSession, Depends(get_db)],
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    record_type: Optional[MaintenanceRecordType] = Query(None),
 ):
     try:
         return await MaintenanceRepository(db).get_history(
             machine_id,
             limit=limit,
             offset=offset,
+            record_type=record_type,
         )
     except HTTPException:
         raise

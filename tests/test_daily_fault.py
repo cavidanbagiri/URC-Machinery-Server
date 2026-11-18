@@ -9,11 +9,13 @@ guard rails and the Content-Disposition header used when a paper is opened.
 
 import unittest
 from decimal import Decimal
+from inspect import signature
 
 from pydantic import ValidationError
 
 from models.daily_fault_model import MAX_DOCUMENT_BYTES
 from repositories.daily_fault_repository import (
+    DailyFaultRepository,
     clamp_pagination,
     content_disposition,
     sanitize_file_name,
@@ -217,6 +219,18 @@ class DocumentLimitTests(unittest.TestCase):
             daily_fault_repository.MAX_DOCUMENT_BYTES, MAX_DOCUMENT_BYTES
         )
         self.assertEqual(MAX_DOCUMENT_BYTES, 10 * 1024 * 1024)
+
+
+class MachineHistoryFilterTests(unittest.TestCase):
+    """The machine detail modal asks for one machine's fault history."""
+
+    def test_list_accepts_machine_id_filter(self):
+        for method in (
+            DailyFaultRepository._fetch_items,
+            DailyFaultRepository.fetch_paginated,
+        ):
+            with self.subTest(method=method.__name__):
+                self.assertIn("machine_id", signature(method).parameters)
 
 
 if __name__ == "__main__":

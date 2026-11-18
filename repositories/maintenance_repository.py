@@ -29,6 +29,7 @@ from repositories.pdf_documents import validate_document
 from schemas.maintenance_schemas import (
     MaintenanceCompleteSchema,
     MaintenanceReadingCreateSchema,
+    MaintenanceRecordType,
     MaintenanceSettingUpdateSchema,
 )
 
@@ -520,6 +521,7 @@ class MaintenanceRepository:
         *,
         limit: int = 50,
         offset: int = 0,
+        record_type: Optional[MaintenanceRecordType] = None,
     ) -> list[dict[str, Any]]:
         await self._get_machine(machine_id)
 
@@ -530,7 +532,7 @@ class MaintenanceRepository:
         if offset < 0:
             offset = 0
 
-        result = await self.db.execute(
+        query = (
             select(
                 MaintenanceRecordModel,
                 UserModel.firstname,
@@ -538,7 +540,15 @@ class MaintenanceRepository:
             )
             .outerjoin(UserModel, MaintenanceRecordModel.created_by_id == UserModel.id)
             .where(MaintenanceRecordModel.machine_id == machine_id)
-            .order_by(
+        )
+        # The drawer used to show readings and maintenance events together.
+        # Machine detail tabs ask for one kind only ("Bakım Geçmişi" must not
+        # be filled with counter readings).
+        if record_type is not None:
+            query = query.where(MaintenanceRecordModel.record_type == record_type)
+
+        result = await self.db.execute(
+            query.order_by(
                 MaintenanceRecordModel.record_date.desc(),
                 MaintenanceRecordModel.id.desc(),
             )

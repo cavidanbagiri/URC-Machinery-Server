@@ -9,6 +9,7 @@ do not connect to PostgreSQL.
 
 import unittest
 from datetime import date
+from inspect import signature
 
 from pydantic import ValidationError
 
@@ -16,6 +17,7 @@ from models.maintenance_model import MachineMaintenanceSettingModel
 from repositories.maintenance_repository import (
     STATUS_DEFINITIONS,
     STATUS_ORDER,
+    MaintenanceRepository,
     compute_maintenance_status,
     sort_maintenance_items,
 )
@@ -347,6 +349,23 @@ class MaintenanceColumnFilterTests(unittest.TestCase):
                 # FastAPI wraps the default in Query(...)
                 default = params[filter_name].default
                 self.assertIsNone(getattr(default, "default", default))
+
+
+class MachineHistoryTypeFilterTests(unittest.TestCase):
+    """The Bakım Geçmişi tab must not be filled with counter readings."""
+
+    def test_history_repository_accepts_record_type_filter(self):
+        params = signature(MaintenanceRepository.get_history).parameters
+        self.assertIn("record_type", params)
+        self.assertIsNone(params["record_type"].default)
+
+    def test_history_endpoint_exposes_record_type_filter(self):
+        from routers.maintenance_router import fetch_maintenance_history
+
+        params = signature(fetch_maintenance_history).parameters
+        self.assertIn("record_type", params)
+        default = params["record_type"].default
+        self.assertIsNone(getattr(default, "default", default))
 
 
 if __name__ == "__main__":

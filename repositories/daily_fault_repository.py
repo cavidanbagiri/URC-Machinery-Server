@@ -182,6 +182,7 @@ class DailyFaultRepository:
         self,
         *,
         search: Optional[str] = None,
+        machine_id: Optional[int] = None,
         territory_id: Optional[int] = None,
         repair_type_id: Optional[int] = None,
         date_from: Optional[date] = None,
@@ -205,6 +206,8 @@ class DailyFaultRepository:
                     RepairTypeModel.name.ilike(pattern),
                 )
             )
+        if machine_id is not None:
+            filters.append(DailyFaultModel.machine_id == machine_id)
         if territory_id is not None:
             filters.append(DailyFaultModel.territory_id == territory_id)
         if repair_type_id is not None:
@@ -237,6 +240,7 @@ class DailyFaultRepository:
         limit: int = DEFAULT_LIMIT,
         offset: int = 0,
         search: Optional[str] = None,
+        machine_id: Optional[int] = None,
         territory_id: Optional[int] = None,
         repair_type_id: Optional[int] = None,
         date_from: Optional[date] = None,
@@ -245,6 +249,7 @@ class DailyFaultRepository:
         limit, offset = clamp_pagination(limit, offset)
         items = await self._fetch_items(
             search=search,
+            machine_id=machine_id,
             territory_id=territory_id,
             repair_type_id=repair_type_id,
             date_from=date_from,

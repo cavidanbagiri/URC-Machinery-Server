@@ -8,6 +8,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 UsageUnit = Literal["km", "hour"]
 
+#: A history row is either a counter reading or a completed maintenance event.
+MaintenanceRecordType = Literal["reading", "maintenance"]
+
 MaintenanceStatusCode = Literal[
     "gecikmis",
     "yaklasiyor",
@@ -176,7 +179,7 @@ class MaintenanceHistoryItemSchema(BaseModel):
 
     id: int
     machine_id: int
-    record_type: Literal["reading", "maintenance"]
+    record_type: MaintenanceRecordType
     record_date: date
     counter_value: Optional[float] = None
     usage_unit: Optional[UsageUnit] = None
