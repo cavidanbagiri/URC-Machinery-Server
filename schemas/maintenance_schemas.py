@@ -69,6 +69,10 @@ class MaintenanceCompleteSchema(BaseModel):
 
     maintenance_date: Optional[date] = None
     counter_value: Optional[float] = Field(None, ge=0)
+    # The maintenance package that was performed (e.g. 500 h or 40.000 km).
+    # Allowed values depend on the machine's ``usage_unit`` and are validated
+    # by the repository, which has access to the setting.
+    interval_value: float = Field(..., gt=0)
     notes: Optional[str] = Field(None, max_length=2000)
 
 

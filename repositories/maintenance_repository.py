@@ -64,6 +64,38 @@ STATUS_ORDER = [
 
 STATUS_PRIORITY = {code: index for index, code in enumerate(STATUS_ORDER)}
 
+#: Maintenance packages offered when a maintenance is completed. These are
+#: intentionally fixed per usage unit so the history stays comparable.
+MAINTENANCE_INTERVAL_OPTIONS: dict[str, tuple[float, ...]] = {
+    "km": (10_000.0, 20_000.0, 30_000.0, 40_000.0),
+    "hour": (500.0, 1_000.0, 2_000.0, 4_000.0),
+}
+
+
+def validate_maintenance_interval(
+    usage_unit: str | None,
+    interval_value: float | None,
+) -> float:
+    """Return the selected package if it is valid for the machine unit."""
+
+    allowed = MAINTENANCE_INTERVAL_OPTIONS.get(usage_unit or "", ())
+    if interval_value is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Bakımı tamamlamak için bakım paketi seçmelisiniz",
+        )
+
+    value = float(interval_value)
+    if value not in allowed:
+        if allowed:
+            allowed_text = ", ".join(f"{item:g}" for item in allowed)
+            detail = f"Bu makine için geçerli bir bakım paketi seçin ({allowed_text})"
+        else:
+            detail = "Makinenin bakım birimi tanımlı olmadığı için bakım paketi seçilemez"
+        raise HTTPException(status_code=400, detail=detail)
+
+    return value
+
 
 def _status(code: str) -> dict[str, str]:
     return dict(STATUS_DEFINITIONS[code])
@@ -766,6 +798,11 @@ class MaintenanceRepository:
                 detail="Pasif bakım planı tamamlanamaz",
             )
 
+        interval_value = validate_maintenance_interval(
+            setting.usage_unit,
+            data.interval_value,
+        )
+
         counter = (
             data.counter_value
             if data.counter_value is not None
@@ -798,7 +835,9 @@ class MaintenanceRepository:
             record_date=maintenance_date,
             counter_value=counter,
             usage_unit=setting.usage_unit,
-            interval_value=setting.interval_value,
+            # Snapshot the package performed in this service. The plan's own
+            # interval stays untouched and continues to drive the next due.
+            interval_value=interval_value,
             notes=data.notes,
             created_by_id=created_by_id,
         )

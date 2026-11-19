@@ -11,15 +11,18 @@ import unittest
 from datetime import date
 from inspect import signature
 
+from fastapi import HTTPException
 from pydantic import ValidationError
 
 from models.maintenance_model import MachineMaintenanceSettingModel
 from repositories.maintenance_repository import (
+    MAINTENANCE_INTERVAL_OPTIONS,
     STATUS_DEFINITIONS,
     STATUS_ORDER,
     MaintenanceRepository,
     compute_maintenance_status,
     sort_maintenance_items,
+    validate_maintenance_interval,
 )
 from schemas.maintenance_schemas import (
     MaintenanceCompleteSchema,
@@ -275,13 +278,24 @@ class MaintenanceSchemaTests(unittest.TestCase):
         self.assertEqual(data.counter_value, 0)
 
     def test_complete_accepts_optional_counter(self):
-        data = MaintenanceCompleteSchema(notes="Filtre değişti")
+        data = MaintenanceCompleteSchema(
+            notes="Filtre değişti",
+            interval_value=500,
+        )
 
         self.assertIsNone(data.counter_value)
         self.assertEqual(data.notes, "Filtre değişti")
+        self.assertEqual(data.interval_value, 500)
 
         with self.assertRaises(ValidationError):
-            MaintenanceCompleteSchema(counter_value=-1)
+            MaintenanceCompleteSchema(counter_value=-1, interval_value=500)
+
+    def test_complete_requires_a_positive_interval(self):
+        with self.assertRaises(ValidationError):
+            MaintenanceCompleteSchema(notes="Filtre değişti")
+
+        with self.assertRaises(ValidationError):
+            MaintenanceCompleteSchema(interval_value=0)
 
     def test_history_item_defaults_to_empty_documents(self):
         item = MaintenanceHistoryItemSchema(
@@ -315,6 +329,58 @@ class MaintenanceSchemaTests(unittest.TestCase):
         ).parameters
         self.assertIn("document", parameters)
         self.assertIsNone(parameters["document"].default)
+
+
+class MaintenanceIntervalPresetTests(unittest.TestCase):
+    """Completion packages are fixed per usage unit."""
+
+    def test_presets_match_the_business_rules(self):
+        self.assertEqual(
+            MAINTENANCE_INTERVAL_OPTIONS["hour"],
+            (500.0, 1_000.0, 2_000.0, 4_000.0),
+        )
+        self.assertEqual(
+            MAINTENANCE_INTERVAL_OPTIONS["km"],
+            (10_000.0, 20_000.0, 30_000.0, 40_000.0),
+        )
+
+    def test_accepts_only_the_matching_unit_preset(self):
+        for value in (500, 1_000, 2_000, 4_000):
+            with self.subTest(unit="hour", value=value):
+                self.assertEqual(
+                    validate_maintenance_interval("hour", value),
+                    float(value),
+                )
+
+        for value in (10_000, 20_000, 30_000, 40_000):
+            with self.subTest(unit="km", value=value):
+                self.assertEqual(
+                    validate_maintenance_interval("km", value),
+                    float(value),
+                )
+
+        with self.assertRaises(HTTPException) as hour_error:
+            validate_maintenance_interval("hour", 10_000)
+        self.assertEqual(hour_error.exception.status_code, 400)
+
+        with self.assertRaises(HTTPException) as km_error:
+            validate_maintenance_interval("km", 500)
+        self.assertEqual(km_error.exception.status_code, 400)
+
+        with self.assertRaises(HTTPException) as retired_km_error:
+            validate_maintenance_interval("km", 80_000)
+        self.assertEqual(retired_km_error.exception.status_code, 400)
+
+    def test_requires_a_package(self):
+        with self.assertRaises(HTTPException) as error:
+            validate_maintenance_interval("hour", None)
+        self.assertEqual(error.exception.status_code, 400)
+
+    def test_complete_endpoint_exposes_interval_field(self):
+        from routers.maintenance_router import complete_maintenance
+
+        params = signature(complete_maintenance).parameters
+        self.assertIn("interval_value", params)
 
 
 class MaintenanceColumnFilterTests(unittest.TestCase):

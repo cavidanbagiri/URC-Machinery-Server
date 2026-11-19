@@ -221,12 +221,14 @@ async def complete_maintenance(
     file: Annotated[UploadFile, File(description="Bakım evrakı (PDF, zorunlu)")],
     maintenance_date: Optional[date] = Form(None),
     counter_value: Optional[float] = Form(None, ge=0),
+    interval_value: Optional[float] = Form(None, gt=0),
     notes: Optional[str] = Form(None, max_length=2000),
 ):
     try:
         data = MaintenanceCompleteSchema(
             maintenance_date=maintenance_date,
             counter_value=counter_value,
+            interval_value=interval_value,
             notes=notes,
         )
         return await MaintenanceRepository(db).complete_maintenance(
