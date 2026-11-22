@@ -79,6 +79,45 @@ class TireChangeCreateSchema(BaseModel):
         return value
 
 
+class TireChangeUpdateSchema(BaseModel):
+    """Editable fields of an existing change.
+
+    The machine stays fixed (the row documents what was fitted on *that*
+    machine); every other value the operator typed can be corrected. All
+    fields are optional here because the client sends only what it edits.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    position: Optional[str] = Field(None, max_length=MAX_POSITION_LENGTH)
+    brand_model: Optional[str] = Field(None, max_length=MAX_BRAND_MODEL_LENGTH)
+    size: Optional[str] = Field(None, max_length=MAX_SIZE_LENGTH)
+    serial_no: Optional[str] = Field(None, max_length=MAX_SERIAL_NO_LENGTH)
+    change_reason: Optional[str] = Field(None, max_length=MAX_REASON_LENGTH)
+    km_hour: Optional[str] = Field(None, max_length=MAX_KM_HOUR_LENGTH)
+    change_date: Optional[date] = None
+
+    @field_validator("position")
+    @classmethod
+    def validate_position(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return normalize_position(value)
+
+    @field_validator("brand_model", "size", "serial_no", "change_reason", "km_hour")
+    @classmethod
+    def normalize_text(cls, value: Optional[str]) -> Optional[str]:
+        return _clean_optional_text(value)
+
+    @field_validator("change_date")
+    @classmethod
+    def validate_change_date(cls, value: Optional[date]) -> Optional[date]:
+        # A tire cannot be changed in the future; keep the counter honest.
+        if value is not None and value > date.today():
+            raise ValueError("Değişim tarihi bugünden ileri olamaz")
+        return value
+
+
 # =========================================================
 # READ
 # =========================================================
@@ -143,6 +182,8 @@ class TireSummarySchema(BaseModel):
     total: int = 0
     #: Changes whose ``change_date`` is today, not when the row was typed.
     changed_today: int = 0
+    #: Changes inside the current calendar month (1st .. today).
+    changed_this_month: int = 0
 
 
 class TireMachineOptionSchema(BaseModel):
@@ -195,6 +236,7 @@ __all__ = [
     "TireChangeCreateSchema",
     "TireChangeDocumentSchema",
     "TireChangeItemSchema",
+    "TireChangeUpdateSchema",
     "TireMachineOptionSchema",
     "TirePositionCreateSchema",
     "TirePositionSchema",

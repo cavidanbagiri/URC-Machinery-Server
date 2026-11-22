@@ -19,6 +19,7 @@ from schemas.tire_schemas import (
     PaginatedTireChangeSchema,
     TireChangeCreateSchema,
     TireChangeItemSchema,
+    TireChangeUpdateSchema,
     TireMachineOptionSchema,
     TirePositionCreateSchema,
     TirePositionSchema,
@@ -132,6 +133,46 @@ async def create_tire_change(
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Lastik kaydı oluşturulamadı: {e}"
+        )
+
+
+@router.put("/{tire_id}", response_model=TireChangeItemSchema)
+async def update_tire_change(
+    tire_id: int,
+    data: TireChangeUpdateSchema,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[UserModel, Depends(require_write_permission)],
+):
+    """Correct the values of an existing record (the machine stays fixed)."""
+
+    try:
+        return await TireRepository(db).update_change(tire_id, data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Lastik kaydı güncellenemedi: {e}"
+        )
+
+
+@router.delete(
+    "/{tire_id}",
+    status_code=204,
+    dependencies=[Depends(require_write_permission)],
+)
+async def delete_tire_change(
+    tire_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Delete a record together with its PDF papers."""
+
+    try:
+        await TireRepository(db).delete_change(tire_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Lastik kaydı silinemedi: {e}"
         )
 
 

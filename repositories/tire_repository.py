@@ -30,7 +30,11 @@ from repositories.pdf_documents import (
     sanitize_file_name,
     validate_document,
 )
-from schemas.tire_schemas import TireChangeCreateSchema, normalize_position
+from schemas.tire_schemas import (
+    TireChangeCreateSchema,
+    TireChangeUpdateSchema,
+    normalize_position,
+)
 
 DEFAULT_LIMIT = 100
 MAX_LIMIT = 100
@@ -301,17 +305,32 @@ class TireRepository:
 
         Both counters use the same machine scope as the table (scrapped
         machines are hidden), so ``total`` equals the unfiltered list total.
-        ``changed_today`` reads ``change_date`` rather than ``created_at``: the
-        form lets the user backdate a replacement.
+        ``changed_today`` / ``changed_this_month`` read ``change_date`` rather
+        than ``created_at``: the form lets the user backdate a replacement.
+
+        The month counter runs from the 1st of the current month up to today
+        (the form rejects future dates), so it needs no month-length maths.
         """
 
         today = date.today()
+        month_start = today.replace(day=1)
         result = await self.db.execute(
             select(
                 func.count(TireChangeModel.id).label("total"),
                 func.count(
                     case((TireChangeModel.change_date == today, TireChangeModel.id))
                 ).label("changed_today"),
+                func.count(
+                    case(
+                        (
+                            and_(
+                                TireChangeModel.change_date >= month_start,
+                                TireChangeModel.change_date <= today,
+                            ),
+                            TireChangeModel.id,
+                        )
+                    )
+                ).label("changed_this_month"),
             )
             .select_from(TireChangeModel)
             .join(
@@ -320,8 +339,12 @@ class TireRepository:
             )
             .where(exclude_scrap_machines())
         )
-        total, changed_today = result.one()
-        return {"total": total or 0, "changed_today": changed_today or 0}
+        total, changed_today, changed_this_month = result.one()
+        return {
+            "total": total or 0,
+            "changed_today": changed_today or 0,
+            "changed_this_month": changed_this_month or 0,
+        }
 
     async def get_machine_options(
         self, *, search: Optional[str] = None, limit: int = 20
@@ -474,6 +497,55 @@ class TireRepository:
             raise
         await self.db.refresh(change)
         return await self.get_item(change.id)
+
+    async def update_change(
+        self, tire_id: int, data: TireChangeUpdateSchema
+    ) -> dict[str, Any]:
+        """Apply the corrected fields of an existing record.
+
+        ``machine_id`` is intentionally absent from the update schema: the row
+        documents what was fitted on that machine, and moving it to another
+        machine would silently rewrite two machines' histories.
+        """
+
+        change = await self.get_change(tire_id)
+
+        payload = data.model_dump(exclude_unset=True)
+        if not payload:
+            raise HTTPException(
+                status_code=400, detail="Güncellenecek alan belirtilmedi"
+            )
+        if "position" in payload and payload["position"] is None:
+            raise HTTPException(status_code=400, detail="Lastik konumu boş olamaz")
+        if "change_date" in payload and payload["change_date"] is None:
+            raise HTTPException(status_code=400, detail="Değişim tarihi boş olamaz")
+
+        for field, value in payload.items():
+            setattr(change, field, value)
+
+        try:
+            await self.db.commit()
+        except IntegrityError as exc:
+            await self.db.rollback()
+            raise HTTPException(
+                status_code=409, detail="Lastik kaydı güncellenemedi"
+            ) from exc
+        except Exception:
+            await self.db.rollback()
+            raise
+        await self.db.refresh(change)
+        return await self.get_item(change.id)
+
+    async def delete_change(self, tire_id: int) -> None:
+        """Delete a record; its papers disappear through the FK / cascade."""
+
+        change = await self.get_change(tire_id)
+        await self.db.delete(change)
+        try:
+            await self.db.commit()
+        except Exception:
+            await self.db.rollback()
+            raise
 
     async def add_document(
         self,

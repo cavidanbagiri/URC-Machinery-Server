@@ -21,15 +21,18 @@ from repositories.maintenance_repository import (
     STATUS_ORDER,
     MaintenanceRepository,
     compute_maintenance_status,
+    resolve_current_counter,
     sort_maintenance_items,
     validate_maintenance_interval,
 )
 from schemas.maintenance_schemas import (
     MaintenanceCompleteSchema,
     MaintenanceDocumentSchema,
+    MaintenanceFetchItemSchema,
     MaintenanceHistoryItemSchema,
     MaintenanceReadingCreateSchema,
     MaintenanceSettingUpdateSchema,
+    MaintenanceSummarySchema,
 )
 
 
@@ -156,6 +159,142 @@ class MaintenanceStatusTests(unittest.TestCase):
             self.assertEqual(definition["code"], code)
             self.assertTrue(definition["name"])
             self.assertTrue(definition["color"])
+
+    def test_live_counter_overrides_the_plan_counter(self):
+        result = compute_maintenance_status(
+            make_setting(current_counter=15_000.0),
+            live_counter=20_400.0,
+        )
+
+        self.assertEqual(result["status"]["code"], "gecikmis")
+        self.assertEqual(result["remaining"], -400.0)
+        self.assertEqual(result["next_counter"], 20_000.0)
+
+    def test_live_counter_can_clear_a_data_warning(self):
+        # KM / saat kaydı plan sayacından yeni: sayaç artık geriye gitmiyor.
+        result = compute_maintenance_status(
+            make_setting(current_counter=9_000.0),
+            live_counter=12_000.0,
+        )
+
+        self.assertEqual(result["status"]["code"], "uygun")
+        self.assertEqual(result["remaining"], 8_000.0)
+
+    def test_missing_live_counter_falls_back_to_the_plan_counter(self):
+        result = compute_maintenance_status(make_setting(), live_counter=None)
+
+        self.assertEqual(result["remaining"], 5_000.0)
+
+
+class MaintenanceCurrentCounterTests(unittest.TestCase):
+    """The newest ``machine_meter_logs`` row feeds the "Güncel KM / Saat" cell."""
+
+    def test_missing_plan_has_no_counter(self):
+        self.assertEqual(
+            resolve_current_counter(
+                None,
+                meter_km=1_000.0,
+                meter_engine_hours=10.0,
+                meter_log_date=date(2026, 11, 20),
+            ),
+            (None, None, None),
+        )
+
+    def test_newer_meter_reading_wins(self):
+        value, value_date, source = resolve_current_counter(
+            make_setting(current_counter=15_000.0),
+            meter_km=17_250.0,
+            meter_engine_hours=900.0,
+            meter_log_date=date(2026, 11, 22),
+        )
+
+        self.assertEqual(value, 17_250.0)
+        self.assertEqual(value_date, date(2026, 11, 22))
+        self.assertEqual(source, "meter")
+
+    def test_newer_plan_counter_keeps_the_counter_from_going_backwards(self):
+        setting = make_setting(
+            current_counter=15_000.0,
+            current_counter_date=date(2026, 11, 21),
+        )
+
+        value, value_date, source = resolve_current_counter(
+            setting,
+            meter_km=12_000.0,
+            meter_engine_hours=900.0,
+            meter_log_date=date(2026, 11, 10),
+        )
+
+        self.assertEqual(value, 15_000.0)
+        self.assertEqual(value_date, date(2026, 11, 21))
+        self.assertEqual(source, "plan")
+
+    def test_meter_wins_a_date_tie(self):
+        setting = make_setting(
+            current_counter=15_000.0,
+            current_counter_date=date(2026, 11, 22),
+        )
+
+        value, _, source = resolve_current_counter(
+            setting,
+            meter_km=16_000.0,
+            meter_engine_hours=900.0,
+            meter_log_date=date(2026, 11, 22),
+        )
+
+        self.assertEqual(value, 16_000.0)
+        self.assertEqual(source, "meter")
+
+    def test_plan_counter_is_the_fallback_without_a_reading(self):
+        setting = make_setting(
+            current_counter=15_000.0,
+            current_counter_date=date(2026, 11, 1),
+        )
+
+        value, value_date, source = resolve_current_counter(setting)
+
+        self.assertEqual(value, 15_000.0)
+        self.assertEqual(value_date, date(2026, 11, 1))
+        self.assertEqual(source, "plan")
+
+    def test_reading_is_used_when_the_plan_has_no_counter(self):
+        value, value_date, source = resolve_current_counter(
+            make_setting(current_counter=None),
+            meter_km=8_000.0,
+            meter_engine_hours=100.0,
+            meter_log_date=date(2026, 11, 20),
+        )
+
+        self.assertEqual(value, 8_000.0)
+        self.assertEqual(value_date, date(2026, 11, 20))
+        self.assertEqual(source, "meter")
+
+    def test_hour_unit_reads_the_engine_hours_column(self):
+        value, _, source = resolve_current_counter(
+            make_setting(
+                usage_unit="hour",
+                interval_value=500.0,
+                last_counter=4_000.0,
+                current_counter=None,
+            ),
+            meter_km=99_000.0,
+            meter_engine_hours=4_250.25,
+            meter_log_date=date(2026, 11, 22),
+        )
+
+        self.assertEqual(value, 4_250.25)
+        self.assertEqual(source, "meter")
+
+    def test_unknown_unit_ignores_the_meter_reading(self):
+        value, _, source = resolve_current_counter(
+            make_setting(usage_unit="mile", current_counter=15_000.0),
+            meter_km=17_000.0,
+            meter_engine_hours=900.0,
+            meter_log_date=date(2026, 11, 22),
+        )
+
+        self.assertEqual(value, 15_000.0)
+        self.assertEqual(source, "plan")
 
 
 def make_sort_item(
@@ -415,6 +554,71 @@ class MaintenanceColumnFilterTests(unittest.TestCase):
                 # FastAPI wraps the default in Query(...)
                 default = params[filter_name].default
                 self.assertIsNone(getattr(default, "default", default))
+
+
+class MaintenanceUpdateDateFilterTests(unittest.TestCase):
+    """The page can list only the machines that were updated on one day."""
+
+    def test_repository_accepts_the_update_date(self):
+        for method_name in ("_fetch_items", "fetch_paginated"):
+            params = signature(
+                getattr(MaintenanceRepository, method_name)
+            ).parameters
+            with self.subTest(method=method_name):
+                self.assertIn("updated_on", params)
+                self.assertIsNone(params["updated_on"].default)
+
+    def test_fetch_maintenance_endpoint_exposes_the_update_date(self):
+        from routers.maintenance_router import fetch_maintenance
+
+        params = signature(fetch_maintenance).parameters
+        self.assertIn("updated_on", params)
+        default = params["updated_on"].default
+        self.assertIsNone(getattr(default, "default", default))
+
+
+class MaintenanceMeterSnapshotSchemaTests(unittest.TestCase):
+    """The list item carries the newest KM / motor saati reading."""
+
+    def make_item(self, **overrides):
+        values = {
+            "machine_id": 1,
+            "has_plan": True,
+            "status": {"code": "uygun", "name": "Uygun", "color": "green"},
+        }
+        values.update(overrides)
+        return MaintenanceFetchItemSchema(**values)
+
+    def test_meter_fields_default_to_none(self):
+        item = self.make_item()
+
+        self.assertIsNone(item.meter_km)
+        self.assertIsNone(item.meter_engine_hours)
+        self.assertIsNone(item.meter_log_date)
+        self.assertIsNone(item.counter_source)
+        self.assertIsNone(item.plan_counter)
+        self.assertIsNone(item.plan_counter_date)
+
+    def test_meter_snapshot_is_accepted(self):
+        item = self.make_item(
+            current_counter=17_250.0,
+            current_counter_date=date(2026, 11, 22),
+            counter_source="meter",
+            plan_counter=15_000.0,
+            plan_counter_date=date(2026, 11, 1),
+            meter_km=17_250.0,
+            meter_engine_hours=1_234.0,
+            meter_log_date=date(2026, 11, 22),
+        )
+
+        self.assertEqual(item.counter_source, "meter")
+        self.assertEqual(item.meter_km, 17_250.0)
+        self.assertEqual(item.meter_engine_hours, 1_234.0)
+        self.assertEqual(item.plan_counter, 15_000.0)
+
+    def test_summary_no_longer_counts_the_daily_maintenance(self):
+        # "Günlük Bakım" kartı kaldırıldı: alan ne şemada ne de yanıtta var.
+        self.assertNotIn("completed_today", MaintenanceSummarySchema.model_fields)
 
 
 class MachineHistoryTypeFilterTests(unittest.TestCase):

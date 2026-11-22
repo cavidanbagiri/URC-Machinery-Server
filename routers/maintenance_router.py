@@ -77,6 +77,9 @@ async def fetch_maintenance(
     car_mark_id: Optional[int] = Query(None),
     car_model_id: Optional[int] = Query(None),
     company_id: Optional[int] = Query(None),
+    # Machines that were updated on that day: a KM / motor saati reading from
+    # **Güncel KM ve Motor Saatleri** or a reading / maintenance record.
+    updated_on: Optional[date] = Query(None),
     sort_by: Optional[MaintenanceSortField] = Query(None),
     sort_order: Optional[MaintenanceSortOrder] = Query(None),
 ):
@@ -95,6 +98,7 @@ async def fetch_maintenance(
             car_mark_id=car_mark_id,
             car_model_id=car_model_id,
             company_id=company_id,
+            updated_on=updated_on,
             sort_by=sort_by,
             sort_order=sort_order,
         )

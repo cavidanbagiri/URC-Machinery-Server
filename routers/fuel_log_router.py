@@ -64,11 +64,18 @@ async def create_fuel_log(
     """Append a fuel distribution row.  Existing rows are never changed."""
     try:
         repository = FuelLogRepository(db)
-        log = await repository.create_log(payload, current_user.id)
 
+        # The table no longer has a *Yakıtı veren* column, so the person who
+        # saved the row becomes the provider unless the payload names one.
         name = " ".join(
             part for part in (current_user.firstname, current_user.lastname) if part
         ).strip()
+
+        log = await repository.create_log(
+            payload,
+            current_user.id,
+            given_by=name or None,
+        )
 
         return FuelLogEntrySchema(
             id=log.id,

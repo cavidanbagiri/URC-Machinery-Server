@@ -5,7 +5,7 @@ from datetime import date
 from typing import Any, Optional
 
 from fastapi import HTTPException
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,8 +23,10 @@ from models.maintenance_model import (
     MaintenanceDocumentModel,
     MaintenanceRecordModel,
 )
+from models.meter_log_model import MachineMeterLogModel
 from models.user_model import UserModel
 from repositories.car_status_lookup import exclude_scrap_machines
+from repositories.meter_log_lookup import latest_meter_log_subquery
 from repositories.pdf_documents import validate_document
 from schemas.maintenance_schemas import (
     MaintenanceCompleteSchema,
@@ -101,13 +103,70 @@ def _status(code: str) -> dict[str, str]:
     return dict(STATUS_DEFINITIONS[code])
 
 
+def resolve_current_counter(
+    setting: MachineMaintenanceSettingModel | None,
+    *,
+    meter_km: float | None = None,
+    meter_engine_hours: float | None = None,
+    meter_log_date: date | None = None,
+) -> tuple[float | None, date | None, str | None]:
+    """Return ``(value, date, source)`` of the machine's current counter.
+
+    **Güncel KM ve Motor Saatleri** writes a ``machine_meter_logs`` row every
+    day, so its newest row is the freshest truth for KM / engine hours on a
+    planned machine.  The plan keeps its own ``current_counter`` (written by the
+    readings / completions of this page) and remains the fallback.
+
+    When both sources carry a value the newer date wins, and the meter row wins
+    a tie (or when a date is missing), so an old meter reading can never make
+    the counter jump backwards.
+    """
+
+    if setting is None:
+        return None, None, None
+
+    if setting.usage_unit == "km":
+        meter_value = meter_km
+    elif setting.usage_unit == "hour":
+        meter_value = meter_engine_hours
+    else:
+        # An unknown unit cannot be compared with either meter column.
+        meter_value = None
+
+    plan_value = (
+        float(setting.current_counter)
+        if setting.current_counter is not None
+        else None
+    )
+    plan_date = setting.current_counter_date
+
+    if meter_value is None:
+        if plan_value is None:
+            return None, None, None
+        return plan_value, plan_date, "plan"
+
+    if plan_value is None:
+        return float(meter_value), meter_log_date, "meter"
+
+    if plan_date is not None and (
+        meter_log_date is None or plan_date > meter_log_date
+    ):
+        return plan_value, plan_date, "plan"
+
+    return float(meter_value), meter_log_date, "meter"
+
+
 def compute_maintenance_status(
     setting: MachineMaintenanceSettingModel | None,
+    *,
+    live_counter: float | None = None,
 ) -> dict[str, Any]:
     """Return the calculated status and plan numbers for one setting.
 
-    The function intentionally never clamps a negative remaining value; the UI
-    needs to show how far past the interval the machine is.
+    ``live_counter`` overrides ``setting.current_counter`` with the machine's
+    freshest counter (see :func:`resolve_current_counter`).  The function
+    intentionally never clamps a negative remaining value; the UI needs to show
+    how far past the interval the machine is.
     """
 
     if setting is None:
@@ -123,6 +182,10 @@ def compute_maintenance_status(
     has_plan = True
     is_active = bool(setting.is_active)
 
+    current_counter = (
+        live_counter if live_counter is not None else setting.current_counter
+    )
+
     interval = setting.interval_value
     effective_threshold = None
     next_counter = None
@@ -136,8 +199,8 @@ def compute_maintenance_status(
         )
         if setting.last_counter is not None:
             next_counter = float(setting.last_counter) + float(interval)
-            if setting.current_counter is not None:
-                remaining = next_counter - float(setting.current_counter)
+            if current_counter is not None:
+                remaining = next_counter - float(current_counter)
 
     if not is_active:
         status_code = "pasif"
@@ -146,10 +209,10 @@ def compute_maintenance_status(
         or interval is None
         or float(interval) <= 0
         or setting.last_counter is None
-        or setting.current_counter is None
+        or current_counter is None
     ):
         status_code = "veri_eksik"
-    elif float(setting.current_counter) < float(setting.last_counter):
+    elif float(current_counter) < float(setting.last_counter):
         status_code = "veri_uyarisi"
     elif remaining is not None and remaining <= 0:
         status_code = "gecikmis"
@@ -233,6 +296,11 @@ class MaintenanceRepository:
     # ---------- HELPERS ----------
 
     def _base_select(self):
+        # One row per machine = its newest KM / engine-hour reading.  The shared
+        # subquery keeps this page and **Güncel KM ve Motor Saatleri** on the
+        # same "latest" rule.
+        latest_meter = latest_meter_log_subquery()
+
         return (
             select(
                 AllMachineModel,
@@ -242,11 +310,21 @@ class MaintenanceRepository:
                 CompanyModel.name.label("company_name"),
                 CarMarkModel.name.label("car_mark_name"),
                 CarModelModel.name.label("car_model_name"),
+                latest_meter.c.last_km.label("meter_km"),
+                latest_meter.c.last_engine_hours.label("meter_engine_hours"),
+                latest_meter.c.last_log_date.label("meter_log_date"),
             )
             .select_from(AllMachineModel)
             .outerjoin(
                 MachineMaintenanceSettingModel,
                 MachineMaintenanceSettingModel.machine_id == AllMachineModel.id,
+            )
+            .outerjoin(
+                latest_meter,
+                and_(
+                    latest_meter.c.machine_id == AllMachineModel.id,
+                    latest_meter.c.row_number == 1,
+                ),
             )
             .outerjoin(
                 TerritoryModel,
@@ -267,7 +345,29 @@ class MaintenanceRepository:
     def _row_to_item(self, row) -> dict[str, Any]:
         machine: AllMachineModel = row[0]
         setting: MachineMaintenanceSettingModel | None = row[1]
-        calculated = compute_maintenance_status(setting)
+
+        meter_km = float(row.meter_km) if row.meter_km is not None else None
+        meter_engine_hours = (
+            float(row.meter_engine_hours)
+            if row.meter_engine_hours is not None
+            else None
+        )
+        meter_log_date = row.meter_log_date
+
+        # The table shows (and the status uses) the freshest counter: the daily
+        # KM / engine-hour reading when it is newer than the plan's own counter.
+        current_counter, current_counter_date, counter_source = (
+            resolve_current_counter(
+                setting,
+                meter_km=meter_km,
+                meter_engine_hours=meter_engine_hours,
+                meter_log_date=meter_log_date,
+            )
+        )
+        calculated = compute_maintenance_status(
+            setting,
+            live_counter=current_counter,
+        )
 
         return {
             "machine_id": machine.id,
@@ -298,14 +398,23 @@ class MaintenanceRepository:
             "last_maintenance_date": (
                 setting.last_maintenance_date if setting is not None else None
             ),
-            "current_counter": (
+            # Effective counter (fresh meter reading or plan counter).
+            "current_counter": current_counter,
+            "current_counter_date": current_counter_date,
+            "counter_source": counter_source,
+            # The plan's own stored values stay editable in the plan modal.
+            "plan_counter": (
                 float(setting.current_counter)
                 if setting is not None and setting.current_counter is not None
                 else None
             ),
-            "current_counter_date": (
+            "plan_counter_date": (
                 setting.current_counter_date if setting is not None else None
             ),
+            # Raw snapshot of the newest machine_meter_logs row.
+            "meter_km": meter_km,
+            "meter_engine_hours": meter_engine_hours,
+            "meter_log_date": meter_log_date,
             "next_counter": calculated["next_counter"],
             "remaining": calculated["remaining"],
             "warning_threshold": (
@@ -333,6 +442,7 @@ class MaintenanceRepository:
         car_mark_id: Optional[int] = None,
         car_model_id: Optional[int] = None,
         company_id: Optional[int] = None,
+        updated_on: Optional[date] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> list[dict[str, Any]]:
@@ -360,6 +470,27 @@ class MaintenanceRepository:
             filters.append(AllMachineModel.car_model_id == car_model_id)
         if company_id is not None:
             filters.append(AllMachineModel.company_id == company_id)
+        if updated_on is not None:
+            # "Güncelleme tarihi": machines touched on that day — a KM / motor
+            # saati row from **Güncel KM ve Motor Saatleri** or a reading /
+            # maintenance record created on this page.
+            meter_update = (
+                select(MachineMeterLogModel.id)
+                .where(
+                    MachineMeterLogModel.machine_id == AllMachineModel.id,
+                    MachineMeterLogModel.log_date == updated_on,
+                )
+                .exists()
+            )
+            record_update = (
+                select(MaintenanceRecordModel.id)
+                .where(
+                    MaintenanceRecordModel.machine_id == AllMachineModel.id,
+                    MaintenanceRecordModel.record_date == updated_on,
+                )
+                .exists()
+            )
+            filters.append(or_(meter_update, record_update))
         if has_plan is True:
             filters.append(MachineMaintenanceSettingModel.id.is_not(None))
         elif has_plan is False:
@@ -446,6 +577,7 @@ class MaintenanceRepository:
         car_mark_id: Optional[int] = None,
         car_model_id: Optional[int] = None,
         company_id: Optional[int] = None,
+        updated_on: Optional[date] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> dict[str, Any]:
@@ -468,6 +600,7 @@ class MaintenanceRepository:
             car_mark_id=car_mark_id,
             car_model_id=car_model_id,
             company_id=company_id,
+            updated_on=updated_on,
             sort_by=sort_by,
             sort_order=sort_order,
         )
@@ -481,25 +614,15 @@ class MaintenanceRepository:
 
     async def get_summary(self) -> dict[str, Any]:
         items = await self._fetch_items(include_inactive=True)
-        today = date.today()
 
-        # Completed maintenance history: the page shows how many maintenance
-        # operations were finished in total and today. Readings are ignored.
+        # Completed maintenance history: readings are ignored.  ("Günlük
+        # Bakım" used to live on the summary cards; the date filter of the page
+        # now drills into a single day instead of only counting it.)
         completed = (
             await self.db.scalar(
                 select(func.count())
                 .select_from(MaintenanceRecordModel)
                 .where(MaintenanceRecordModel.record_type == "maintenance")
-            )
-        ) or 0
-        completed_today = (
-            await self.db.scalar(
-                select(func.count())
-                .select_from(MaintenanceRecordModel)
-                .where(
-                    MaintenanceRecordModel.record_type == "maintenance",
-                    MaintenanceRecordModel.record_date == today,
-                )
             )
         ) or 0
 
@@ -528,7 +651,6 @@ class MaintenanceRepository:
                 1 for item in items if item["has_plan"] and not item["is_active"]
             ),
             "completed": int(completed),
-            "completed_today": int(completed_today),
             "overdue": counts["gecikmis"],
             "due_soon": counts["yaklasiyor"],
             "needs_attention": (

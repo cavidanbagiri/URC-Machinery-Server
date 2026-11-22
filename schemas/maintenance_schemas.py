@@ -113,8 +113,20 @@ class MaintenanceFetchItemSchema(BaseModel):
     last_counter: Optional[float] = None
     last_maintenance_date: Optional[date] = None
 
+    # Effective counter shown by the table: the newest value between the plan
+    # and the machine's daily ``machine_meter_logs`` reading.
     current_counter: Optional[float] = None
     current_counter_date: Optional[date] = None
+    counter_source: Optional[Literal["meter", "plan"]] = None
+
+    # The plan's own stored counter (editable in the plan modal).
+    plan_counter: Optional[float] = None
+    plan_counter_date: Optional[date] = None
+
+    # Raw newest reading from **Güncel KM ve Motor Saatleri**.
+    meter_km: Optional[float] = None
+    meter_engine_hours: Optional[float] = None
+    meter_log_date: Optional[date] = None
 
     next_counter: Optional[float] = None
     remaining: Optional[float] = None
@@ -154,7 +166,6 @@ class MaintenanceSummarySchema(BaseModel):
     inactive: int
     # Completed maintenance events (maintenance_records.record_type == "maintenance").
     completed: int = 0
-    completed_today: int = 0
     overdue: int
     due_soon: int
     needs_attention: int

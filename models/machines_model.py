@@ -154,6 +154,15 @@ class AllMachineModel(Base):
     # YENİ — Status relationship
     status = relationship("CarStatusModel", back_populates="machines")
 
+    # Evrak Takip Tablosu (models/document_tracking_model.py)
+    document_tracking = relationship(
+        "MachineDocumentTrackingModel",
+        back_populates="machine",
+        uselist=False,
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
     # Relationship to User (assuming UserModel is defined in the same file or imported)
     creator = relationship("UserModel")
 
@@ -267,6 +276,7 @@ from models.repair_model import (  # noqa: E402,F401
     RepairTypeModel,
 )
 from models.machine_photo_model import MachinePhotoModel  # noqa: E402,F401
+from models.document_tracking_model import MachineDocumentTrackingModel  # noqa: E402,F401
 from models.daily_fault_model import (  # noqa: E402,F401
     DailyFaultDocumentModel,
     DailyFaultModel,

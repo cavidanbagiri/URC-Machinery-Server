@@ -17,12 +17,14 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 from routers import (  # noqa: E402
     auth_router,
     daily_fault_router,
+    document_tracking_router,
     forum_router,
     fuel_log_router,
     machines_router,
     maintenance_router,
     meter_log_router,
     purchase_request_router,
+    rental_machine_router,
     repair_router,
     stock_router,
     tire_router,
@@ -85,12 +87,14 @@ app.add_middleware(
 
 app.include_router(router = auth_router.router, prefix="/api/auth", tags=["User"])
 app.include_router(router = machines_router.router, prefix="/api/machines", tags=["Machines"])
+app.include_router(router = document_tracking_router.router, prefix="/api/document-tracking", tags=["Document Tracking"])
 app.include_router(router = maintenance_router.router, prefix="/api/maintenance", tags=["Maintenance"])
 app.include_router(router = meter_log_router.router, prefix="/api/meter-logs", tags=["Meter Logs"])
 app.include_router(router = fuel_log_router.router, prefix="/api/fuel-logs", tags=["Fuel Logs"])
 app.include_router(router = repair_router.router, prefix="/api/repair", tags=["Repair"])
 app.include_router(router = daily_fault_router.router, prefix="/api/daily-faults", tags=["Daily Fault"])
 app.include_router(router = purchase_request_router.router, prefix="/api/purchase-requests", tags=["Purchase Requests"])
+app.include_router(router = rental_machine_router.router, prefix="/api/rental-machines", tags=["Rental Machines"])
 app.include_router(router = warehouse_router.router, prefix="/api/warehouse", tags=["Warehouse"])
 app.include_router(router = stock_router.router, prefix="/api/stock", tags=["Stock"])
 app.include_router(router = forum_router.router, prefix="/api/forum", tags=["Forum"])

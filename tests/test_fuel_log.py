@@ -4,8 +4,9 @@ Run from ``server/``:
     python -m unittest tests.test_fuel_log -v
 
 These tests do not connect to PostgreSQL.  They cover the write schema, the
-daily / weekly / monthly period helpers, the row-to-schema mapping and the
-append-only table definition.
+daily / weekly / monthly / previous-month period helpers, the SRU / DCU
+territory totals, the average-consumption calculation, the row-to-schema
+mapping and the append-only table definition.
 """
 
 import unittest
@@ -20,6 +21,7 @@ from schemas.fuel_log_schemas import (
     FuelLogCreateSchema,
     FuelLogEntrySchema,
     FuelLogMachineSchema,
+    FuelLogOverviewSchema,
 )
 
 
@@ -60,14 +62,27 @@ class FuelLogSchemaTests(unittest.TestCase):
                         given_by="Depo",
                     )
 
-    def test_blank_given_by_is_rejected(self):
-        with self.assertRaises(ValidationError):
-            FuelLogCreateSchema(
-                machine_id=1,
-                fuel_date=date(2026, 11, 17),
-                liters=10,
-                given_by="   ",
-            )
+    def test_blank_given_by_becomes_none(self):
+        """The UI has no *Yakıtı veren* input; the router fills the user name."""
+
+        payload = FuelLogCreateSchema(
+            machine_id=1,
+            fuel_date=date(2026, 11, 17),
+            liters=10,
+            given_by="   ",
+        )
+
+        self.assertIsNone(payload.given_by)
+
+    def test_given_by_is_optional(self):
+        payload = FuelLogCreateSchema(
+            machine_id=1,
+            fuel_date=date(2026, 11, 17),
+            liters=10,
+        )
+
+        self.assertIsNone(payload.given_by)
+        self.assertIsNone(payload.note)
 
     def test_required_fields_and_unknown_fields(self):
         with self.assertRaises(ValidationError):
@@ -90,6 +105,54 @@ class FuelLogSchemaTests(unittest.TestCase):
         machine = FuelLogMachineSchema(machine_id=1)
         self.assertEqual(machine.day_liters, 0)
         self.assertEqual(machine.day_entry_count, 0)
+        self.assertIsNone(machine.last_km)
+        self.assertIsNone(machine.last_engine_hours)
+        self.assertIsNone(machine.last_log_date)
+        self.assertIsNone(machine.usage_unit)
+        self.assertIsNone(machine.consumption_unit)
+        self.assertIsNone(machine.avg_consumption)
+        self.assertIsNone(machine.consumption_distance)
+
+    def test_machine_read_schema_carries_meter_and_consumption(self):
+        machine = FuelLogMachineSchema(
+            machine_id=7,
+            last_km=12_345.5,
+            last_engine_hours=350,
+            last_log_date=date(2026, 11, 21),
+            usage_unit="km",
+            consumption_unit="km",
+            avg_consumption=0.2845,
+            consumption_liters=700,
+            consumption_distance=2_460,
+            consumption_start_date=date(2026, 11, 1),
+            consumption_end_date=date(2026, 11, 21),
+        )
+
+        self.assertEqual(machine.last_km, 12_345.5)
+        self.assertEqual(machine.consumption_unit, "km")
+        self.assertEqual(machine.avg_consumption, 0.2845)
+
+    def test_overview_schema_carries_the_four_summary_totals(self):
+        overview = FuelLogOverviewSchema(
+            fuel_date=date(2026, 11, 22),
+            week_start=date(2026, 11, 16),
+            month_start=date(2026, 11, 1),
+            daily_total=100,
+            weekly_total=400,
+            monthly_total=1_500,
+            previous_month_start=date(2026, 10, 1),
+            previous_month_end=date(2026, 10, 31),
+            previous_month_total=3_200,
+            sru_monthly_total=900,
+            dcu_monthly_total=600,
+        )
+
+        self.assertEqual(overview.previous_month_start, date(2026, 10, 1))
+        self.assertEqual(overview.previous_month_end, date(2026, 10, 31))
+        self.assertEqual(overview.previous_month_total, 3_200)
+        self.assertEqual(overview.sru_monthly_total, 900)
+        self.assertEqual(overview.dcu_monthly_total, 600)
+        self.assertEqual(overview.machines, [])
 
 
 class FuelLogPeriodTests(unittest.TestCase):
@@ -117,16 +180,17 @@ class FuelLogPeriodTests(unittest.TestCase):
             SimpleNamespace(fuel_date=date(2026, 11, 17), liters=40),
         ]
 
-        daily, weekly, monthly = FuelLogRepository._period_totals(
+        totals = FuelLogRepository._period_totals(
             rows,
             target_date=date(2026, 11, 17),
             week_start=date(2026, 11, 11),
             month_start=date(2026, 11, 1),
         )
 
-        self.assertEqual(daily, 40)
-        self.assertEqual(weekly, 70)
-        self.assertEqual(monthly, 100)
+        self.assertEqual(totals["daily"], 40)
+        self.assertEqual(totals["weekly"], 70)
+        self.assertEqual(totals["monthly"], 100)
+        self.assertEqual(totals["previous_month"], 0)
 
     def test_week_can_include_previous_month_but_month_total_cannot(self):
         rows = [
@@ -135,16 +199,97 @@ class FuelLogPeriodTests(unittest.TestCase):
             SimpleNamespace(fuel_date=date(2026, 11, 3), liters=20),
         ]
 
-        daily, weekly, monthly = FuelLogRepository._period_totals(
+        totals = FuelLogRepository._period_totals(
             rows,
             target_date=date(2026, 11, 3),
             week_start=date(2026, 10, 28),
             month_start=date(2026, 11, 1),
         )
 
-        self.assertEqual(daily, 20)
-        self.assertEqual(weekly, 50)
-        self.assertEqual(monthly, 25)
+        self.assertEqual(totals["daily"], 20)
+        self.assertEqual(totals["weekly"], 50)
+        self.assertEqual(totals["monthly"], 25)
+
+    def test_previous_month_bounds(self):
+        self.assertEqual(
+            FuelLogRepository._previous_month_bounds(date(2026, 11, 1)),
+            (date(2026, 10, 1), date(2026, 10, 31)),
+        )
+        # January rolls back to the previous year.
+        self.assertEqual(
+            FuelLogRepository._previous_month_bounds(date(2026, 1, 1)),
+            (date(2025, 12, 1), date(2025, 12, 31)),
+        )
+        # Leap year February.
+        self.assertEqual(
+            FuelLogRepository._previous_month_bounds(date(2028, 3, 1)),
+            (date(2028, 2, 1), date(2028, 2, 29)),
+        )
+
+    def test_previous_month_total_is_a_complete_month(self):
+        rows = [
+            SimpleNamespace(fuel_date=date(2026, 10, 1), liters=100),
+            SimpleNamespace(fuel_date=date(2026, 10, 31), liters=50),
+            SimpleNamespace(fuel_date=date(2026, 11, 1), liters=30),
+        ]
+        previous_start, previous_end = FuelLogRepository._previous_month_bounds(
+            date(2026, 11, 1)
+        )
+
+        totals = FuelLogRepository._period_totals(
+            rows,
+            target_date=date(2026, 11, 22),
+            week_start=date(2026, 11, 16),
+            month_start=date(2026, 11, 1),
+            previous_start=previous_start,
+            previous_end=previous_end,
+        )
+
+        self.assertEqual(totals["previous_month"], 150)
+        self.assertEqual(totals["monthly"], 30)
+        self.assertEqual(totals["weekly"], 0)
+
+    def test_territory_total_matches_name_case_insensitively(self):
+        rows = [
+            SimpleNamespace(territory_name="SRU", liters=120),
+            SimpleNamespace(territory_name=" sru ", liters=30),
+            SimpleNamespace(territory_name="DCU", liters=45),
+            SimpleNamespace(territory_name=None, liters=10),
+        ]
+
+        self.assertEqual(FuelLogRepository._territory_total(rows, "SRU"), 150)
+        self.assertEqual(FuelLogRepository._territory_total(rows, "dcu"), 45)
+        self.assertEqual(FuelLogRepository._territory_total(rows, "Ofis"), 0)
+
+    def test_consumption_uses_the_maintenance_unit(self):
+        unit, value = FuelLogRepository._consumption(700, 2_500, 0, "km")
+        self.assertEqual(unit, "km")
+        self.assertAlmostEqual(value, 0.28)
+
+        unit, value = FuelLogRepository._consumption(700, 0, 350, "hour")
+        self.assertEqual(unit, "hour")
+        self.assertAlmostEqual(value, 2.0)
+
+    def test_consumption_falls_back_to_the_other_counter(self):
+        """A km machine without odometer movement still shows L/saat."""
+
+        unit, value = FuelLogRepository._consumption(120, 0, 40, "km")
+        self.assertEqual(unit, "hour")
+        self.assertAlmostEqual(value, 3.0)
+
+        # No maintenance setting: km is preferred when it moved.
+        unit, value = FuelLogRepository._consumption(120, 400, 40, None)
+        self.assertEqual(unit, "km")
+        self.assertAlmostEqual(value, 0.3)
+
+    def test_consumption_needs_fuel_and_counter_movement(self):
+        self.assertEqual(FuelLogRepository._consumption(0, 1_000, 0, "km"), (None, None))
+        self.assertEqual(
+            FuelLogRepository._consumption(None, 1_000, 0, "km"), (None, None)
+        )
+        # Fewer than one counter unit is treated as "no data".
+        self.assertEqual(FuelLogRepository._consumption(10, 0.4, 0, "km"), (None, None))
+        self.assertEqual(FuelLogRepository._consumption(10, 0, 0, "hour"), (None, None))
 
     def test_creator_name(self):
         self.assertEqual(

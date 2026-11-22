@@ -23,6 +23,7 @@ from repositories.tire_repository import (
 )
 from schemas.tire_schemas import (
     TireChangeCreateSchema,
+    TireChangeUpdateSchema,
     TirePositionCreateSchema,
     TireSummarySchema,
     normalize_position,
@@ -111,16 +112,75 @@ class TireChangeCreateSchemaTests(unittest.TestCase):
             TireChangeCreateSchema(**payload(previous_count=2))
 
 
+class TireChangeUpdateSchemaTests(unittest.TestCase):
+    """Row actions (düzenle) send only the fields the operator changed."""
+
+    def test_every_field_is_optional(self):
+        self.assertEqual(TireChangeUpdateSchema().model_dump(exclude_unset=True), {})
+
+    def test_only_sent_fields_are_exported(self):
+        parsed = TireChangeUpdateSchema(size="315/80 R22.5")
+        self.assertEqual(
+            parsed.model_dump(exclude_unset=True), {"size": "315/80 R22.5"}
+        )
+
+    def test_position_is_normalized(self):
+        parsed = TireChangeUpdateSchema(position="  Sağ   Arka 2 ")
+        self.assertEqual(parsed.position, "Sağ Arka 2")
+
+    def test_blank_position_is_rejected(self):
+        with self.assertRaises(ValidationError):
+            TireChangeUpdateSchema(position="   ")
+
+    def test_blank_optional_text_becomes_none(self):
+        parsed = TireChangeUpdateSchema(brand_model="  ", serial_no="")
+        self.assertIsNone(parsed.brand_model)
+        self.assertIsNone(parsed.serial_no)
+
+    def test_text_lengths_are_limited(self):
+        with self.assertRaises(ValidationError):
+            TireChangeUpdateSchema(brand_model="M" * 151)
+        with self.assertRaises(ValidationError):
+            TireChangeUpdateSchema(serial_no="S" * 101)
+        with self.assertRaises(ValidationError):
+            TireChangeUpdateSchema(change_reason="x" * 1001)
+
+    def test_future_change_date_is_rejected(self):
+        tomorrow = date.today() + timedelta(days=1)
+        with self.assertRaises(ValidationError):
+            TireChangeUpdateSchema(change_date=tomorrow)
+
+    def test_today_is_allowed(self):
+        self.assertEqual(
+            TireChangeUpdateSchema(change_date=date.today()).change_date,
+            date.today(),
+        )
+
+    def test_machine_can_not_be_moved(self):
+        # The row documents what was fitted on that machine; moving it would
+        # rewrite two machines' histories.
+        with self.assertRaises(ValidationError):
+            TireChangeUpdateSchema(machine_id=7)
+
+    def test_unknown_fields_are_rejected(self):
+        with self.assertRaises(ValidationError):
+            TireChangeUpdateSchema(created_by_id=1)
+
+
 class TireSummarySchemaTests(unittest.TestCase):
     def test_defaults_are_zero(self):
         summary = TireSummarySchema()
         self.assertEqual(summary.total, 0)
         self.assertEqual(summary.changed_today, 0)
+        self.assertEqual(summary.changed_this_month, 0)
 
     def test_accepts_counters(self):
-        summary = TireSummarySchema(total=42, changed_today=3)
+        summary = TireSummarySchema(
+            total=42, changed_today=3, changed_this_month=11
+        )
         self.assertEqual(summary.total, 42)
         self.assertEqual(summary.changed_today, 3)
+        self.assertEqual(summary.changed_this_month, 11)
 
 
 class TirePositionSchemaTests(unittest.TestCase):
