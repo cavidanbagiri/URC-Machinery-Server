@@ -15,6 +15,9 @@ Besides the fuel ledger the overview joins:
   tracked on its odometer (``km``) or on its engine hour meter (``hour``).
 * ``territories`` - the two main sites (SRU / DCU) get their own current-month
   summary card.
+* ``machine_rental_fuel_logs`` - the diesel handed to **rented** machines.  That
+  ledger points at ``machine_rentals`` instead of ``all_machines`` and is served
+  by ``repositories/rental_fuel_log_repository.py`` for the *Kiralık* tab.
 """
 
 from collections import defaultdict
@@ -41,6 +44,7 @@ from models.meter_log_model import MachineMeterLogModel
 from models.user_model import UserModel
 from repositories.car_status_lookup import exclude_scrap_machines
 from repositories.meter_log_lookup import latest_meter_log_subquery
+from repositories.rental_fuel_log_repository import RentalFuelLogRepository
 from schemas.fuel_log_schemas import FuelLogCreateSchema
 
 #: Territory names that get a separate current-month summary card.
@@ -186,6 +190,14 @@ class FuelLogRepository:
         target = target_date or date.today()
         week_start, month_start = self._resolve_periods(target)
 
+        # Kiralık sekmesi (rented machines) keeps its own append-only ledger in
+        # ``machine_rental_fuel_logs``; the section is merged into the same
+        # payload so the page still needs a single request.
+        rental_section = await RentalFuelLogRepository(self.db).fetch_section(
+            target_date=target,
+            search=search,
+        )
+
         filters = [exclude_scrap_machines()]
 
         term = (search or "").strip()
@@ -323,6 +335,7 @@ class FuelLogRepository:
                 "previous_month_total": 0.0,
                 "sru_monthly_total": 0.0,
                 "dcu_monthly_total": 0.0,
+                **rental_section,
                 "machines": [],
             }
 
@@ -444,6 +457,7 @@ class FuelLogRepository:
             "dcu_monthly_total": self._territory_total(
                 territory_rows, DCU_TERRITORY_NAME
             ),
+            **rental_section,
             "machines": machines,
         }
 

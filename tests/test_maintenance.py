@@ -15,6 +15,12 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from models.maintenance_model import MachineMaintenanceSettingModel
+from repositories.machine_kind_lookup import (
+    TRAILER_IDENTIFICATION_PATTERN,
+    exclude_trailer_machines,
+    is_trailer_identification_no,
+    is_trailer_type_name,
+)
 from repositories.maintenance_repository import (
     MAINTENANCE_INTERVAL_OPTIONS,
     STATUS_DEFINITIONS,
@@ -636,6 +642,58 @@ class MachineHistoryTypeFilterTests(unittest.TestCase):
         self.assertIn("record_type", params)
         default = params["record_type"].default
         self.assertIsNone(getattr(default, "default", default))
+
+
+class TrailerMachineExclusionTests(unittest.TestCase):
+    """TIR dorseleri (Tır Dorse tipi / TD-... kodlu) Bakım sayfasında yoktur.
+
+    Dorse bir makine değil, çekilen ekipmandır: kendi motor saati / KM sayacı
+    olmadığı için ne "Güncel KM / Saat" tablosunda ne de özet kartlarında
+    görünmelidir. Diğer modüllerde (arıza, lastik, evrak) kalmaya devam eder.
+    """
+
+    def test_type_label_marks_a_trailer(self):
+        for label in ("Tır Dorse", "TIR DORSE", "  tir   dorse ", "Dorse"):
+            with self.subTest(label=label):
+                self.assertTrue(is_trailer_type_name(label))
+
+        for label in ("Tır", "Kamyonet", "Traktör", "", None):
+            with self.subTest(label=label):
+                self.assertFalse(is_trailer_type_name(label))
+
+    def test_identification_no_marks_a_trailer(self):
+        for code in ("TD-101", "td 102", "TD103", " td-104 "):
+            with self.subTest(code=code):
+                self.assertTrue(is_trailer_identification_no(code))
+
+        for code in ("TDR-5", "TIR-101", "TR-101", "", None):
+            with self.subTest(code=code):
+                self.assertFalse(is_trailer_identification_no(code))
+
+    def test_exclusion_condition_covers_both_markers(self):
+        from sqlalchemy.dialects import postgresql
+
+        sql = str(
+            exclude_trailer_machines().compile(
+                dialect=postgresql.dialect(),
+                compile_kwargs={"literal_binds": True},
+            )
+        )
+
+        self.assertTrue(sql.startswith("NOT"))
+        self.assertIn("dorse", sql)
+        self.assertIn(TRAILER_IDENTIFICATION_PATTERN, sql)
+        # NULL tip / NULL kod taşıyan makineler makine olarak kalır.
+        self.assertEqual(sql.count("coalesce"), 2)
+        self.assertEqual(sql.count("false"), 2)
+
+    def test_maintenance_list_applies_the_exclusion(self):
+        from inspect import getsource
+
+        from repositories import maintenance_repository
+
+        source = getsource(MaintenanceRepository._fetch_items)
+        self.assertIn("exclude_trailer_machines()", source)
 
 
 if __name__ == "__main__":

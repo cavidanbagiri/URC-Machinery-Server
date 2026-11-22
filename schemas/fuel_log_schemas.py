@@ -59,6 +59,33 @@ class FuelLogCreateSchema(BaseModel):
         return _clean_optional_text(value)
 
 
+class RentalFuelLogCreateSchema(BaseModel):
+    """Diesel handed to a *rented* machine (Kiralık sekmesi).
+
+    Rented equipment has no fleet ID, so the row points at the rental
+    agreement (``machine_rentals.id``) instead of ``all_machines``.  The rest of
+    the payload is identical to :class:`FuelLogCreateSchema`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    rental_id: int = Field(..., gt=0)
+    fuel_date: date
+    liters: float = Field(..., gt=0, le=1_000_000)
+    given_by: Optional[str] = Field(None, max_length=MAX_GIVEN_BY_LENGTH)
+    note: Optional[str] = Field(None, max_length=MAX_NOTE_LENGTH)
+
+    @field_validator("given_by")
+    @classmethod
+    def validate_given_by(cls, value: Optional[str]) -> Optional[str]:
+        return normalize_given_by(value)
+
+    @field_validator("note")
+    @classmethod
+    def normalize_note(cls, value: Optional[str]) -> Optional[str]:
+        return _clean_optional_text(value)
+
+
 # =========================================================
 # READ
 # =========================================================
@@ -66,6 +93,20 @@ class FuelLogCreateSchema(BaseModel):
 class FuelLogEntrySchema(BaseModel):
     id: int
     machine_id: int
+    fuel_date: date
+    liters: float
+    given_by: str
+    note: Optional[str] = None
+    entered_by_id: Optional[int] = None
+    entered_by_name: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+class RentalFuelLogEntrySchema(BaseModel):
+    """One appended row of the Kiralık ledger."""
+
+    id: int
+    rental_id: int
     fuel_date: date
     liters: float
     given_by: str
@@ -119,6 +160,36 @@ class FuelLogMachineSchema(BaseModel):
     consumption_end_date: Optional[date] = None
 
 
+class FuelLogRentalMachineSchema(BaseModel):
+    """One rental agreement on the **Kiralık** tab.
+
+    ``status`` is derived from the rental dates **on the selected day**, so the
+    badge always matches the ledger being viewed.
+    """
+
+    rental_id: int
+    equipment_name: str
+    company_name: str
+    site_name: str
+    start_date: date
+    end_date: date
+
+    status: str
+    status_label: str
+
+    #: Selected day aggregates (0 / None when no row was entered).
+    day_liters: float = 0
+    day_entry_count: int = 0
+    last_given_by: Optional[str] = None
+    last_note: Optional[str] = None
+    last_created_at: Optional[datetime] = None
+
+    #: Month (month start → selected day) and all-time totals of this rental.
+    monthly_liters: float = 0
+    total_liters: float = 0
+    total_entry_count: int = 0
+
+
 class FuelLogOverviewSchema(BaseModel):
     fuel_date: date
     week_start: date
@@ -137,4 +208,13 @@ class FuelLogOverviewSchema(BaseModel):
     sru_monthly_total: float
     dcu_monthly_total: float
 
+    #: Kiralık sekmesi: diesel we gave to rented machines.  ``rental_total`` is
+    #: the all-time total up to the selected day; the other two cover the
+    #: selected day and the current month.  They always describe the whole
+    #: rented fleet (search only filters the rows).
+    rental_total: float = 0
+    rental_daily_total: float = 0
+    rental_monthly_total: float = 0
+
     machines: list[FuelLogMachineSchema] = Field(default_factory=list)
+    rental_machines: list[FuelLogRentalMachineSchema] = Field(default_factory=list)

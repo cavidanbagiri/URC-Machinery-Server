@@ -59,6 +59,19 @@ class MeterLogMachineSchema(BaseModel):
     last_log_date: Optional[date] = None
     last_logged_at: Optional[datetime] = None
 
+    # "Son Gün/KM" column: newest reading minus the reading of the day before
+    # it.  ``last_change_from_date`` is the day that difference starts from.
+    last_change_km: Optional[float] = None
+    last_change_engine_hours: Optional[float] = None
+    last_change_from_date: Optional[date] = None
+
+    # "1 Aylık Toplam" column: newest reading minus the earliest reading of the
+    # last ``MONTH_CHANGE_DAYS`` days ("at most a month").  ``None`` when the
+    # machine has a single day of readings in that span.
+    month_change_km: Optional[float] = None
+    month_change_engine_hours: Optional[float] = None
+    month_change_from_date: Optional[date] = None
+
     # All readings that fall inside the requested window, oldest first.
     recent_logs: list[MeterLogEntrySchema] = Field(default_factory=list)
 

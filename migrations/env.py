@@ -28,6 +28,7 @@ import models.machine_photo_model  # noqa: E402,F401
 import models.maintenance_model  # noqa: E402,F401
 import models.meter_log_model  # noqa: E402,F401
 import models.purchase_request_model  # noqa: E402,F401
+import models.rental_fuel_log_model  # noqa: E402,F401
 import models.rental_machine_model  # noqa: E402,F401
 import models.repair_model  # noqa: E402,F401
 import models.stock_model  # noqa: E402,F401

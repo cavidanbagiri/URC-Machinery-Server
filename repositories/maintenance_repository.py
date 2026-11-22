@@ -26,6 +26,7 @@ from models.maintenance_model import (
 from models.meter_log_model import MachineMeterLogModel
 from models.user_model import UserModel
 from repositories.car_status_lookup import exclude_scrap_machines
+from repositories.machine_kind_lookup import exclude_trailer_machines
 from repositories.meter_log_lookup import latest_meter_log_subquery
 from repositories.pdf_documents import validate_document
 from schemas.maintenance_schemas import (
@@ -512,6 +513,11 @@ class MaintenanceRepository:
         # "Hurda" (scrapped) machines stay in the database but are never listed,
         # so they neither appear in the table nor in its summary counters.
         filters.append(exclude_scrap_machines())
+
+        # TIR dorseleri (Tır Dorse tipi / TD-... kodlu) çekilen ekipmandır, kendi
+        # motor saati / KM sayacı yoktur: Bakım listesinde ve özet kartlarında
+        # görünmezler. Arıza, lastik, evrak gibi diğer modüllerde kalırlar.
+        filters.append(exclude_trailer_machines())
 
         if filters:
             query = query.where(*filters)

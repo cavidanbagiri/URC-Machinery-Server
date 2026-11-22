@@ -104,7 +104,12 @@ async def delete_rental_machine(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[UserModel, Depends(require_write_permission)],
 ):
-    """Delete one rental row (the table has no child records)."""
+    """Delete one rental row.
+
+    The diesel rows of the rental live in ``machine_rental_fuel_logs`` and are
+    removed by the database (``ON DELETE CASCADE``), so deleting an agreement
+    also clears its fuel ledger.
+    """
 
     try:
         await RentalMachineRepository(db).delete(rental_id)

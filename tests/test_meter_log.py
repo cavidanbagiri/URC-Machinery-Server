@@ -9,15 +9,25 @@ definition.
 """
 
 import unittest
+from collections import namedtuple
 from datetime import date, datetime, timezone
 from types import SimpleNamespace
 
 from pydantic import ValidationError
+from sqlalchemy.dialects import postgresql
 
 from models.meter_log_model import MachineMeterLogModel
 from repositories.meter_log_lookup import latest_meter_log_subquery
-from repositories.meter_log_repository import MAX_OVERVIEW_DAYS, MeterLogRepository
-from schemas.meter_log_schemas import MeterLogCreateSchema, MeterLogEntrySchema
+from repositories.meter_log_repository import (
+    MAX_OVERVIEW_DAYS,
+    MONTH_CHANGE_DAYS,
+    MeterLogRepository,
+)
+from schemas.meter_log_schemas import (
+    MeterLogCreateSchema,
+    MeterLogEntrySchema,
+    MeterLogMachineSchema,
+)
 from schemas.repair_schemas import RepairMachineOptionSchema
 from schemas.tire_schemas import TireMachineOptionSchema
 
@@ -96,6 +106,29 @@ class MeterLogWindowTests(unittest.TestCase):
                 self.assertEqual(parsed.last_km, 12345.5)
                 self.assertEqual(parsed.last_engine_hours, 987.25)
                 self.assertEqual(parsed.last_log_date, date(2026, 11, 17))
+
+    def test_machine_schema_carries_change_columns(self):
+        empty = MeterLogMachineSchema(machine_id=5)
+
+        self.assertIsNone(empty.last_change_km)
+        self.assertIsNone(empty.month_change_from_date)
+
+        parsed = MeterLogMachineSchema(
+            machine_id=5,
+            last_km=1500.0,
+            last_log_date=date(2026, 11, 22),
+            last_change_km=25.5,
+            last_change_engine_hours=2.0,
+            last_change_from_date=date(2026, 11, 21),
+            month_change_km=640.0,
+            month_change_engine_hours=48.0,
+            month_change_from_date=date(2026, 10, 23),
+        )
+
+        self.assertEqual(parsed.last_change_km, 25.5)
+        self.assertEqual(parsed.last_change_from_date, date(2026, 11, 21))
+        self.assertEqual(parsed.month_change_engine_hours, 48.0)
+        self.assertEqual(parsed.month_change_from_date, date(2026, 10, 23))
 
     def test_window_ends_on_selected_day_and_is_inclusive(self):
         start, end = MeterLogRepository._resolve_window(
@@ -181,6 +214,235 @@ class MeterLogModelTests(unittest.TestCase):
         indexes = {index.name for index in MachineMeterLogModel.__table__.indexes}
 
         self.assertIn("ix_machine_meter_logs_machine_date", indexes)
+
+
+class MeterLogChangeHelperTests(unittest.TestCase):
+    def test_difference_requires_both_values(self):
+        self.assertIsNone(MeterLogRepository._difference(1500.0, None))
+        self.assertIsNone(MeterLogRepository._difference(None, 1400.0))
+        self.assertEqual(MeterLogRepository._difference(1500.0, 1400.0), 100.0)
+        self.assertEqual(MeterLogRepository._difference(10, 2.555), 7.45)
+
+    def test_latest_per_day_keeps_newest_save_and_sorts_by_day(self):
+        rows = [
+            {"log_date": date(2026, 11, 16), "km": 100.0, "engine_hours": 10.0},
+            {"log_date": date(2026, 11, 17), "km": 150.0, "engine_hours": 12.0},
+            {"log_date": date(2026, 11, 17), "km": 160.0, "engine_hours": 13.0},
+        ]
+
+        days = MeterLogRepository._latest_per_day(rows)
+
+        self.assertEqual(
+            [day["log_date"] for day in days],
+            [date(2026, 11, 16), date(2026, 11, 17)],
+        )
+        self.assertEqual(days[-1]["km"], 160.0)
+        self.assertEqual(days[-1]["engine_hours"], 13.0)
+
+    def test_latest_per_day_of_empty_history(self):
+        self.assertEqual(MeterLogRepository._latest_per_day([]), [])
+
+    def test_reading_mapping(self):
+        row = SimpleNamespace(
+            log_date=date(2026, 11, 17),
+            km=1500,
+            engine_hours=42,
+        )
+
+        self.assertEqual(
+            MeterLogRepository._reading(row),
+            {
+                "log_date": date(2026, 11, 17),
+                "km": 1500.0,
+                "engine_hours": 42.0,
+            },
+        )
+
+    def test_month_window_is_thirty_days(self):
+        self.assertEqual(MONTH_CHANGE_DAYS, 30)
+
+
+READING_ROW = namedtuple(
+    "READING_ROW",
+    ["machine_id", "log_date", "km", "engine_hours"],
+)
+
+WINDOW_END = date(2026, 11, 22)
+
+
+def reading(machine_id, log_date, km, engine_hours):
+    return READING_ROW(machine_id, log_date, km, engine_hours)
+
+
+def machine_item(machine_id, last_log_date):
+    """Machine row as ``fetch_overview`` builds it before the changes are set."""
+
+    return {
+        "machine_id": machine_id,
+        "last_log_date": last_log_date,
+        "last_km": None,
+        "last_engine_hours": None,
+        "last_change_km": None,
+        "last_change_engine_hours": None,
+        "last_change_from_date": None,
+        "month_change_km": None,
+        "month_change_engine_hours": None,
+        "month_change_from_date": None,
+        "recent_logs": [],
+    }
+
+
+class FakeResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+
+class ScriptedDb:
+    """Returns prepared rows in order so ``_attach_changes`` runs offline.
+
+    ``_attach_changes`` issues exactly two selects: the readings inside the
+    month window, then the newest readings before it.
+    """
+
+    def __init__(self, window_rows, older_rows):
+        self.results = [list(window_rows), list(older_rows)]
+        self.statements = []
+
+    async def execute(self, statement):
+        self.statements.append(statement)
+        return FakeResult(self.results.pop(0))
+
+
+class MeterLogChangeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_changes_between_readings(self):
+        machines = {
+            1: machine_item(1, date(2026, 11, 22)),
+            2: machine_item(2, date(2026, 11, 22)),
+            3: machine_item(3, date(2026, 11, 22)),
+            4: machine_item(4, None),
+        }
+
+        db = ScriptedDb(
+            window_rows=[
+                # Aynı gün iki kayıt: son kayıt geçerlidir (1235 / 156).
+                reading(1, date(2026, 11, 20), 1200, 150),
+                reading(1, date(2026, 11, 21), 1230, 155),
+                reading(1, date(2026, 11, 21), 1235, 156),
+                reading(1, date(2026, 11, 22), 1250, 160),
+                # Tek okuma: karşılaştırılacak gün yok.
+                reading(2, date(2026, 11, 22), 500, 20),
+                # Pencerede tek gün, tabanı bir aydan eski.
+                reading(3, date(2026, 11, 22), 300, 10),
+            ],
+            older_rows=[
+                reading(1, date(2026, 10, 10), 1000, 120),
+                reading(3, date(2026, 9, 1), 250, 8),
+            ],
+        )
+
+        repository = MeterLogRepository(db)
+        await repository._attach_changes(machines, WINDOW_END)
+
+        self.assertEqual(machines[1]["last_change_km"], 15.0)
+        self.assertEqual(machines[1]["last_change_engine_hours"], 4.0)
+        self.assertEqual(
+            machines[1]["last_change_from_date"], date(2026, 11, 21)
+        )
+        # Aylık toplam pencerenin ilk gününden (20 Kasım) hesaplanır; bir aydan
+        # eski okuma (10 Ekim) artık taban değildir.
+        self.assertEqual(machines[1]["month_change_km"], 50.0)
+        self.assertEqual(machines[1]["month_change_engine_hours"], 10.0)
+        self.assertEqual(
+            machines[1]["month_change_from_date"], date(2026, 11, 20)
+        )
+
+        self.assertIsNone(machines[2]["last_change_km"])
+        self.assertIsNone(machines[2]["last_change_from_date"])
+        self.assertIsNone(machines[2]["month_change_km"])
+
+        self.assertEqual(machines[3]["last_change_km"], 50.0)
+        self.assertEqual(machines[3]["last_change_from_date"], date(2026, 9, 1))
+        # Pencerede tek gün var: bir aylık toplam için ikinci okuma yok.
+        self.assertIsNone(machines[3]["month_change_km"])
+        self.assertIsNone(machines[3]["month_change_engine_hours"])
+        self.assertIsNone(machines[3]["month_change_from_date"])
+
+        self.assertIsNone(machines[4]["last_change_km"])
+        self.assertIsNone(machines[4]["month_change_km"])
+
+        # Sorgular PostgreSQL lehçesinde derlenebilmeli (canlı DB'de koşacak).
+        window_sql = str(
+            db.statements[0].compile(dialect=postgresql.dialect())
+        )
+        history_sql = str(
+            db.statements[1].compile(dialect=postgresql.dialect())
+        )
+        self.assertIn("machine_meter_logs", window_sql)
+        self.assertIn("row_number", history_sql)
+
+    async def test_changes_ignore_machines_outside_the_page(self):
+        machines = {1: machine_item(1, date(2026, 11, 22))}
+
+        db = ScriptedDb(
+            window_rows=[
+                reading(1, date(2026, 11, 18), 100, 5),
+                reading(1, date(2026, 11, 22), 180, 9),
+                reading(99, date(2026, 11, 22), 900, 90),
+            ],
+            older_rows=[reading(99, date(2026, 8, 1), 800, 80)],
+        )
+
+        await MeterLogRepository(db)._attach_changes(machines, WINDOW_END)
+
+        self.assertEqual(machines[1]["last_change_km"], 80.0)
+        # Geçmişi pencereye sığan makinede aylık taban ilk okumadır.
+        self.assertEqual(machines[1]["month_change_km"], 80.0)
+        self.assertEqual(
+            machines[1]["month_change_from_date"], date(2026, 11, 18)
+        )
+        self.assertNotIn(99, machines)
+
+    async def test_month_total_uses_available_days_not_only_a_full_month(self):
+        """Kısa geçmişte de dolmalı: 5 günlük veri → 5 günlük toplam."""
+
+        machines = {1: machine_item(1, date(2026, 11, 22))}
+
+        db = ScriptedDb(
+            window_rows=[
+                reading(1, date(2026, 11, 18), 1000, 100),
+                reading(1, date(2026, 11, 19), 1010, 101),
+                reading(1, date(2026, 11, 20), 1025, 102.5),
+                reading(1, date(2026, 11, 21), 1040, 104),
+                reading(1, date(2026, 11, 22), 1060, 106),
+            ],
+            # Bir aydan eski okuma aylık toplama katılmaz.
+            older_rows=[reading(1, date(2026, 8, 1), 900, 90)],
+        )
+
+        await MeterLogRepository(db)._attach_changes(machines, WINDOW_END)
+
+        self.assertEqual(machines[1]["month_change_km"], 60.0)
+        self.assertEqual(machines[1]["month_change_engine_hours"], 6.0)
+        self.assertEqual(
+            machines[1]["month_change_from_date"], date(2026, 11, 18)
+        )
+        # "Son Gün/KM" yine önceki güne göre hesaplanır.
+        self.assertEqual(machines[1]["last_change_km"], 20.0)
+        self.assertEqual(
+            machines[1]["last_change_from_date"], date(2026, 11, 21)
+        )
+
+    async def test_no_readings_leaves_changes_empty(self):
+        machines = {1: machine_item(1, None)}
+
+        db = ScriptedDb(window_rows=[], older_rows=[])
+        await MeterLogRepository(db)._attach_changes(machines, WINDOW_END)
+
+        self.assertEqual(db.statements, [])
+        self.assertIsNone(machines[1]["last_change_km"])
 
 
 if __name__ == "__main__":

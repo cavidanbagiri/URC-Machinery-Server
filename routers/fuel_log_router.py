@@ -10,10 +10,13 @@ from dependencies.auth import get_current_user
 from dependencies.permissions import require_write_permission
 from models.user_model import UserModel
 from repositories.fuel_log_repository import FuelLogRepository
+from repositories.rental_fuel_log_repository import RentalFuelLogRepository
 from schemas.fuel_log_schemas import (
     FuelLogCreateSchema,
     FuelLogEntrySchema,
     FuelLogOverviewSchema,
+    RentalFuelLogCreateSchema,
+    RentalFuelLogEntrySchema,
 )
 
 # Every fuel-log endpoint requires a valid access token.  Writes additionally
@@ -34,7 +37,13 @@ async def fetch_fuel_log_overview(
     fuel_date: Optional[date] = Query(None),
     search: Optional[str] = Query(None, max_length=100),
 ):
-    """Machines with the selected day's fuel totals and period summaries."""
+    """Machines with the selected day's fuel totals and period summaries.
+
+    The response also carries the **Kiralık** tab (rented machines): the
+    ``rental_*`` totals and ``rental_machines`` rows come from
+    ``machine_rental_fuel_logs``, which points at the rental agreement instead
+    of a fleet machine.
+    """
     try:
         repository = FuelLogRepository(db)
         return await repository.fetch_overview(
@@ -94,4 +103,52 @@ async def create_fuel_log(
         raise HTTPException(
             status_code=500,
             detail=f"Mazot kaydı kaydedilemedi: {e}",
+        )
+
+
+@router.post(
+    "/rental/create",
+    response_model=RentalFuelLogEntrySchema,
+    status_code=201,
+)
+async def create_rental_fuel_log(
+    payload: RentalFuelLogCreateSchema,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[UserModel, Depends(require_write_permission)],
+):
+    """Append a diesel row for a **rented** machine (Kiralık sekmesi).
+
+    Rented equipment has no fleet ID, so the row references the rental
+    agreement; like the machine ledger, existing rows are never changed.
+    """
+    try:
+        repository = RentalFuelLogRepository(db)
+
+        name = " ".join(
+            part for part in (current_user.firstname, current_user.lastname) if part
+        ).strip()
+
+        log = await repository.create_log(
+            payload,
+            current_user.id,
+            given_by=name or None,
+        )
+
+        return RentalFuelLogEntrySchema(
+            id=log.id,
+            rental_id=log.rental_id,
+            fuel_date=log.fuel_date,
+            liters=float(log.liters),
+            given_by=log.given_by,
+            note=log.note,
+            entered_by_id=log.created_by_id,
+            entered_by_name=name or None,
+            created_at=log.created_at,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Kiralık makine mazot kaydı kaydedilemedi: {e}",
         )
