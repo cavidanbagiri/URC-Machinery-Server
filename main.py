@@ -20,6 +20,7 @@ from routers import (  # noqa: E402
     document_tracking_router,
     forum_router,
     fuel_log_router,
+    isg_router,
     machines_router,
     maintenance_router,
     meter_log_router,
@@ -95,6 +96,7 @@ app.include_router(router = repair_router.router, prefix="/api/repair", tags=["R
 app.include_router(router = daily_fault_router.router, prefix="/api/daily-faults", tags=["Daily Fault"])
 app.include_router(router = purchase_request_router.router, prefix="/api/purchase-requests", tags=["Purchase Requests"])
 app.include_router(router = rental_machine_router.router, prefix="/api/rental-machines", tags=["Rental Machines"])
+app.include_router(router = isg_router.router, prefix="/api/isg", tags=["ISG"])
 app.include_router(router = warehouse_router.router, prefix="/api/warehouse", tags=["Warehouse"])
 app.include_router(router = stock_router.router, prefix="/api/stock", tags=["Stock"])
 app.include_router(router = forum_router.router, prefix="/api/forum", tags=["Forum"])
