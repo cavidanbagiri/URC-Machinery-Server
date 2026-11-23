@@ -9,9 +9,14 @@ from database.setup import get_db
 from dependencies.auth import get_current_user
 from dependencies.permissions import require_write_permission
 from models.user_model import UserModel
-from repositories.fuel_log_repository import FuelLogRepository
+from repositories.fuel_log_repository import (
+    DEFAULT_DISTRIBUTION_DAYS,
+    MAX_DISTRIBUTION_DAYS,
+    FuelLogRepository,
+)
 from repositories.rental_fuel_log_repository import RentalFuelLogRepository
 from schemas.fuel_log_schemas import (
+    FuelDistributionSchema,
     FuelLogCreateSchema,
     FuelLogEntrySchema,
     FuelLogOverviewSchema,
@@ -56,6 +61,40 @@ async def fetch_fuel_log_overview(
         raise HTTPException(
             status_code=500,
             detail=f"Mazot dağılımı kayıtları getirilemedi: {e}",
+        )
+
+
+@router.get("/statistics/daily", response_model=FuelDistributionSchema)
+async def fetch_fuel_distribution(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    days: int = Query(
+        DEFAULT_DISTRIBUTION_DAYS,
+        ge=1,
+        le=MAX_DISTRIBUTION_DAYS,
+        description="Rolling window length in days (dashboard chart uses 7).",
+    ),
+    end_date: Optional[date] = Query(
+        None,
+        description="Last day of the window; defaults to today.",
+    ),
+):
+    """Dashboard **Mazot Dağılımı** chart: SRU / DCU / kiralık per day.
+
+    One item per calendar day (days without rows come back as zeros) so the
+    grouped bar chart always has ``days`` bar groups.
+    """
+    try:
+        repository = FuelLogRepository(db)
+        return await repository.fetch_daily_distribution(
+            days=days,
+            end_date=end_date,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Mazot dağılım istatistikleri getirilemedi: {e}",
         )
 
 

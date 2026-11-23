@@ -6,7 +6,8 @@ Run from ``server/``:
 These tests do not connect to PostgreSQL.  They cover the write schema, the
 daily / weekly / monthly / previous-month period helpers, the SRU / DCU
 territory totals, the average-consumption calculation, the row-to-schema
-mapping and the append-only table definition.
+mapping, the dashboard diesel distribution series and the append-only table
+definition.
 """
 
 import unittest
@@ -17,7 +18,10 @@ from pydantic import ValidationError
 
 from models.fuel_log_model import MachineFuelLogModel
 from repositories.fuel_log_repository import FuelLogRepository
+from routers import fuel_log_router
 from schemas.fuel_log_schemas import (
+    FuelDistributionDaySchema,
+    FuelDistributionSchema,
     FuelLogCreateSchema,
     FuelLogEntrySchema,
     FuelLogMachineSchema,
@@ -322,6 +326,99 @@ class FuelLogPeriodTests(unittest.TestCase):
         self.assertEqual(schema.given_by, "Depo Sorumlusu")
         self.assertEqual(schema.note, "Sabah dolumu")
         self.assertEqual(schema.entered_by_name, "Ayşe Yılmaz")
+
+
+class FuelLogDistributionTests(unittest.TestCase):
+    """Dashboard **Mazot Dağılımı** chart (SRU / DCU / kiralık, son 7 gün)."""
+
+    def test_territory_bucket_matches_names_case_insensitively(self):
+        self.assertEqual(FuelLogRepository._territory_bucket("SRU"), "sru")
+        self.assertEqual(FuelLogRepository._territory_bucket(" sru "), "sru")
+        self.assertEqual(FuelLogRepository._territory_bucket("Dcu"), "dcu")
+        self.assertIsNone(FuelLogRepository._territory_bucket("Ofis"))
+        self.assertIsNone(FuelLogRepository._territory_bucket(None))
+        self.assertIsNone(FuelLogRepository._territory_bucket("   "))
+
+    def test_build_distribution_keeps_every_day_of_the_window(self):
+        start = date(2026, 11, 16)
+        end = date(2026, 11, 22)
+
+        series = FuelLogRepository._build_distribution(
+            start,
+            end,
+            sru_by_day={date(2026, 11, 17): 120.5, date(2026, 11, 22): 80},
+            dcu_by_day={date(2026, 11, 17): 40},
+            rental_by_day={date(2026, 11, 20): 25.25},
+        )
+
+        self.assertEqual(series["start_date"], start)
+        self.assertEqual(series["end_date"], end)
+        self.assertEqual(series["days"], 7)
+        self.assertEqual(len(series["items"]), 7)
+
+        # Days without rows come back as zeros, not missing bar groups.
+        self.assertEqual(series["items"][0]["fuel_date"], start)
+        self.assertEqual(series["items"][0]["sru_liters"], 0)
+        self.assertEqual(series["items"][0]["total_liters"], 0)
+
+        second = series["items"][1]
+        self.assertEqual(second["fuel_date"], date(2026, 11, 17))
+        self.assertEqual(second["sru_liters"], 120.5)
+        self.assertEqual(second["dcu_liters"], 40)
+        self.assertEqual(second["rental_liters"], 0)
+        self.assertEqual(second["total_liters"], 160.5)
+
+        self.assertEqual(series["items"][4]["rental_liters"], 25.25)
+
+    def test_build_distribution_totals(self):
+        series = FuelLogRepository._build_distribution(
+            date(2026, 11, 20),
+            date(2026, 11, 22),
+            sru_by_day={date(2026, 11, 20): 10, date(2026, 11, 21): 5},
+            dcu_by_day={date(2026, 11, 22): 7},
+            rental_by_day={date(2026, 11, 21): 3},
+        )
+
+        self.assertEqual(series["sru_total"], 15)
+        self.assertEqual(series["dcu_total"], 7)
+        self.assertEqual(series["rental_total"], 3)
+        self.assertEqual(series["total"], 25)
+        # A single day window still yields exactly one bar group.
+        single = FuelLogRepository._build_distribution(
+            date(2026, 11, 22),
+            date(2026, 11, 22),
+            {},
+            {},
+            {},
+        )
+        self.assertEqual(single["days"], 1)
+        self.assertEqual(single["items"][0]["total_liters"], 0)
+
+    def test_distribution_schema_defaults(self):
+        schema = FuelDistributionSchema(
+            start_date=date(2026, 11, 16),
+            end_date=date(2026, 11, 22),
+            days=7,
+        )
+
+        self.assertEqual(schema.total, 0)
+        self.assertEqual(schema.rental_total, 0)
+        self.assertEqual(schema.items, [])
+
+        day = FuelDistributionDaySchema(fuel_date=date(2026, 11, 16))
+        self.assertEqual(day.sru_liters, 0)
+        self.assertEqual(day.dcu_liters, 0)
+        self.assertEqual(day.rental_liters, 0)
+        self.assertEqual(day.total_liters, 0)
+
+    def test_dashboard_distribution_route_is_registered(self):
+        routes = {
+            (route.path, route.status_code)
+            for route in fuel_log_router.router.routes
+            if hasattr(route, "methods")
+        }
+
+        self.assertIn(("/statistics/daily", None), routes)
 
 
 class FuelLogModelTests(unittest.TestCase):

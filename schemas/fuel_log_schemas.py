@@ -190,6 +190,38 @@ class FuelLogRentalMachineSchema(BaseModel):
     total_entry_count: int = 0
 
 
+class FuelDistributionDaySchema(BaseModel):
+    """One bar group of the dashboard's diesel chart (one calendar day).
+
+    ``sru_liters`` / ``dcu_liters`` come from ``machine_fuel_logs`` joined with
+    the machine's territory; ``rental_liters`` is the diesel handed to **rented**
+    equipment (``machine_rental_fuel_logs``).  Days without a row are returned
+    with zeros so the chart always has one group per day.
+    """
+
+    fuel_date: date
+    sru_liters: float = 0
+    dcu_liters: float = 0
+    rental_liters: float = 0
+    total_liters: float = 0
+
+
+class FuelDistributionSchema(BaseModel):
+    """Rolling window (default 7 days) of the dashboard diesel chart."""
+
+    start_date: date
+    end_date: date
+    days: int
+
+    #: Window totals of the three series and their sum.
+    sru_total: float = 0
+    dcu_total: float = 0
+    rental_total: float = 0
+    total: float = 0
+
+    items: list[FuelDistributionDaySchema] = Field(default_factory=list)
+
+
 class FuelLogOverviewSchema(BaseModel):
     fuel_date: date
     week_start: date

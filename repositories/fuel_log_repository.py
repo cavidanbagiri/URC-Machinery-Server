@@ -18,6 +18,8 @@ Besides the fuel ledger the overview joins:
 * ``machine_rental_fuel_logs`` - the diesel handed to **rented** machines.  That
   ledger points at ``machine_rentals`` instead of ``all_machines`` and is served
   by ``repositories/rental_fuel_log_repository.py`` for the *Kiralık* tab.
+* ``fetch_daily_distribution`` - the dashboard's **Mazot Dağılımı** chart: the
+  last 7 days with one grouped bar per day (SRU, DCU and the rented fleet).
 """
 
 from collections import defaultdict
@@ -41,6 +43,7 @@ from models.machines_model import (
 )
 from models.maintenance_model import MachineMaintenanceSettingModel
 from models.meter_log_model import MachineMeterLogModel
+from models.rental_fuel_log_model import MachineRentalFuelLogModel
 from models.user_model import UserModel
 from repositories.car_status_lookup import exclude_scrap_machines
 from repositories.meter_log_lookup import latest_meter_log_subquery
@@ -50,6 +53,10 @@ from schemas.fuel_log_schemas import FuelLogCreateSchema
 #: Territory names that get a separate current-month summary card.
 SRU_TERRITORY_NAME = "SRU"
 DCU_TERRITORY_NAME = "DCU"
+
+#: Dashboard diesel chart: rolling window and its hard limits.
+DEFAULT_DISTRIBUTION_DAYS = 7
+MAX_DISTRIBUTION_DAYS = 31
 
 #: A consumption average needs the counter to move at least one full unit;
 #: smaller movements (e.g. a forklift moving 0.2 km) would only amplify noise.
@@ -146,6 +153,72 @@ class FuelLogRepository:
             for row in rows
             if (row.territory_name or "").strip().casefold() == wanted
         )
+
+    @staticmethod
+    def _territory_bucket(territory_name: Optional[str]) -> Optional[str]:
+        """Map a territory name onto a chart series (``"sru"`` / ``"dcu"``)."""
+
+        wanted = (territory_name or "").strip().casefold()
+        if not wanted:
+            return None
+        if wanted == SRU_TERRITORY_NAME.strip().casefold():
+            return "sru"
+        if wanted == DCU_TERRITORY_NAME.strip().casefold():
+            return "dcu"
+        return None
+
+    @staticmethod
+    def _build_distribution(
+        start_date: date,
+        end_date: date,
+        sru_by_day: dict[date, float],
+        dcu_by_day: dict[date, float],
+        rental_by_day: dict[date, float],
+    ) -> dict:
+        """Assemble one item per calendar day for the dashboard diesel chart.
+
+        Days without any row are kept (with zeros) so the bar groups always line
+        up with the requested window instead of collapsing to the days that
+        happen to have data.
+        """
+
+        items: list[dict] = []
+        totals = {"sru": 0.0, "dcu": 0.0, "rental": 0.0}
+
+        day = start_date
+        while day <= end_date:
+            sru = round(float(sru_by_day.get(day) or 0), 2)
+            dcu = round(float(dcu_by_day.get(day) or 0), 2)
+            rental = round(float(rental_by_day.get(day) or 0), 2)
+
+            items.append(
+                {
+                    "fuel_date": day,
+                    "sru_liters": sru,
+                    "dcu_liters": dcu,
+                    "rental_liters": rental,
+                    "total_liters": round(sru + dcu + rental, 2),
+                }
+            )
+
+            totals["sru"] += sru
+            totals["dcu"] += dcu
+            totals["rental"] += rental
+            day += timedelta(days=1)
+
+        return {
+            "start_date": start_date,
+            "end_date": end_date,
+            "days": len(items),
+            "sru_total": round(totals["sru"], 2),
+            "dcu_total": round(totals["dcu"], 2),
+            "rental_total": round(totals["rental"], 2),
+            "total": round(
+                totals["sru"] + totals["dcu"] + totals["rental"],
+                2,
+            ),
+            "items": items,
+        }
 
     @staticmethod
     def _consumption(
@@ -460,6 +533,93 @@ class FuelLogRepository:
             **rental_section,
             "machines": machines,
         }
+
+    async def fetch_daily_distribution(
+        self,
+        days: int = DEFAULT_DISTRIBUTION_DAYS,
+        end_date: Optional[date] = None,
+    ) -> dict:
+        """Daily diesel liters of SRU, DCU and the rented fleet.
+
+        Used by the dashboard's **Mazot Dağılımı** chart: one bar group per day,
+        three series.  SRU / DCU liters come from ``machine_fuel_logs`` joined
+        with the machine's territory (scrapped machines are excluded, exactly
+        like the page's summary boxes) and the rental series comes from the
+        separate rented-machine ledger (``machine_rental_fuel_logs``).
+        """
+
+        end = end_date or date.today()
+        span = int(days or DEFAULT_DISTRIBUTION_DAYS)
+        span = max(1, min(span, MAX_DISTRIBUTION_DAYS))
+        start = end - timedelta(days=span - 1)
+
+        machine_ids = select(AllMachineModel.id).where(exclude_scrap_machines())
+
+        # Liters per day per territory; SRU / DCU are picked by name below so an
+        # extra territory never breaks the chart.
+        territory_query = (
+            select(
+                MachineFuelLogModel.fuel_date.label("fuel_date"),
+                TerritoryModel.name.label("territory_name"),
+                func.sum(MachineFuelLogModel.liters).label("liters"),
+            )
+            .select_from(MachineFuelLogModel)
+            .join(
+                AllMachineModel,
+                AllMachineModel.id == MachineFuelLogModel.machine_id,
+            )
+            .outerjoin(
+                TerritoryModel,
+                TerritoryModel.id == AllMachineModel.territory_id,
+            )
+            .where(
+                MachineFuelLogModel.fuel_date >= start,
+                MachineFuelLogModel.fuel_date <= end,
+                MachineFuelLogModel.machine_id.in_(machine_ids),
+            )
+            .group_by(
+                MachineFuelLogModel.fuel_date,
+                TerritoryModel.name,
+            )
+        )
+
+        territory_result = await self.db.execute(territory_query)
+
+        sru_by_day: dict[date, float] = defaultdict(float)
+        dcu_by_day: dict[date, float] = defaultdict(float)
+
+        for row in territory_result.all():
+            bucket = self._territory_bucket(row.territory_name)
+            if bucket == "sru":
+                sru_by_day[row.fuel_date] += float(row.liters or 0)
+            elif bucket == "dcu":
+                dcu_by_day[row.fuel_date] += float(row.liters or 0)
+
+        # Kiralık sekmesi: diesel we handed to rented equipment.
+        rental_query = (
+            select(
+                MachineRentalFuelLogModel.fuel_date.label("fuel_date"),
+                func.sum(MachineRentalFuelLogModel.liters).label("liters"),
+            )
+            .where(
+                MachineRentalFuelLogModel.fuel_date >= start,
+                MachineRentalFuelLogModel.fuel_date <= end,
+            )
+            .group_by(MachineRentalFuelLogModel.fuel_date)
+        )
+
+        rental_result = await self.db.execute(rental_query)
+        rental_by_day: dict[date, float] = {
+            row.fuel_date: float(row.liters or 0) for row in rental_result.all()
+        }
+
+        return self._build_distribution(
+            start,
+            end,
+            sru_by_day,
+            dcu_by_day,
+            rental_by_day,
+        )
 
     async def _attach_consumption(self, machines_by_id: dict[int, dict]) -> None:
         """Fill the average consumption of every machine on the page.
