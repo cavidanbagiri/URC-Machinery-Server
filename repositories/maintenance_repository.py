@@ -742,6 +742,157 @@ class MaintenanceRepository:
             )
         return records
 
+    async def fetch_records(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        search: Optional[str] = None,
+        date_from: Optional[date] = None,
+        date_to: Optional[date] = None,
+        usage_unit: Optional[str] = None,
+        territory_id: Optional[int] = None,
+        type_id: Optional[int] = None,
+        company_id: Optional[int] = None,
+        record_type: MaintenanceRecordType = "maintenance",
+    ) -> dict[str, Any]:
+        """Completed maintenances of every machine ("Arşiv" tab), paginated.
+
+        The Bakım page's first tab is machine centric (one row per machine with
+        its plan); the archive is record centric: one row per performed
+        maintenance, newest first, with the machine labels and the PDF
+        metadata. Counter readings stay out (``record_type="maintenance"``).
+        """
+
+        if limit < 1:
+            limit = 50
+        if limit > 100:
+            limit = 100
+        if offset < 0:
+            offset = 0
+
+        conditions = [
+            MaintenanceRecordModel.record_type == record_type,
+            exclude_scrap_machines(),
+        ]
+
+        if search and search.strip():
+            pattern = f"%{search.strip()}%"
+            conditions.append(
+                or_(
+                    AllMachineModel.identification_no.ilike(pattern),
+                    AllMachineModel.plate_no.ilike(pattern),
+                    AllMachineModel.vin_no.ilike(pattern),
+                    MaintenanceRecordModel.notes.ilike(pattern),
+                )
+            )
+        if date_from is not None:
+            conditions.append(MaintenanceRecordModel.record_date >= date_from)
+        if date_to is not None:
+            conditions.append(MaintenanceRecordModel.record_date <= date_to)
+        if usage_unit:
+            conditions.append(MaintenanceRecordModel.usage_unit == usage_unit)
+        if territory_id is not None:
+            conditions.append(AllMachineModel.territory_id == territory_id)
+        if type_id is not None:
+            conditions.append(AllMachineModel.type_id == type_id)
+        if company_id is not None:
+            conditions.append(AllMachineModel.company_id == company_id)
+
+        total = (
+            await self.db.scalar(
+                select(func.count())
+                .select_from(MaintenanceRecordModel)
+                .join(
+                    AllMachineModel,
+                    MaintenanceRecordModel.machine_id == AllMachineModel.id,
+                )
+                .where(*conditions)
+            )
+        ) or 0
+
+        result = await self.db.execute(
+            select(
+                MaintenanceRecordModel,
+                AllMachineModel.identification_no,
+                AllMachineModel.plate_no,
+                TerritoryModel.name.label("territory_name"),
+                TypeTransportModel.name.label("type_name"),
+                CompanyModel.name.label("company_name"),
+                CarMarkModel.name.label("car_mark_name"),
+                CarModelModel.name.label("car_model_name"),
+                UserModel.firstname,
+                UserModel.lastname,
+            )
+            .select_from(MaintenanceRecordModel)
+            .join(
+                AllMachineModel,
+                MaintenanceRecordModel.machine_id == AllMachineModel.id,
+            )
+            .outerjoin(
+                TerritoryModel,
+                AllMachineModel.territory_id == TerritoryModel.id,
+            )
+            .outerjoin(
+                TypeTransportModel,
+                AllMachineModel.type_id == TypeTransportModel.id,
+            )
+            .outerjoin(
+                CompanyModel,
+                AllMachineModel.company_id == CompanyModel.id,
+            )
+            .outerjoin(CarMarkModel, AllMachineModel.car_mark_id == CarMarkModel.id)
+            .outerjoin(CarModelModel, AllMachineModel.car_model_id == CarModelModel.id)
+            .outerjoin(UserModel, MaintenanceRecordModel.created_by_id == UserModel.id)
+            .where(*conditions)
+            .order_by(
+                MaintenanceRecordModel.record_date.desc(),
+                MaintenanceRecordModel.id.desc(),
+            )
+            .offset(offset)
+            .limit(limit)
+        )
+
+        rows = result.all()
+        documents_by_record = await self._get_documents_by_record(
+            [row[0].id for row in rows]
+        )
+
+        items = []
+        for row in rows:
+            record = row[0]
+            name = " ".join(part for part in (row.firstname, row.lastname) if part)
+            items.append(
+                {
+                    "id": record.id,
+                    "machine_id": record.machine_id,
+                    "record_type": record.record_type,
+                    "record_date": record.record_date,
+                    "counter_value": record.counter_value,
+                    "usage_unit": record.usage_unit,
+                    "interval_value": record.interval_value,
+                    "notes": record.notes,
+                    "created_by_id": record.created_by_id,
+                    "created_by_name": name.strip() or None,
+                    "created_at": record.created_at,
+                    "documents": documents_by_record.get(record.id, []),
+                    "identification_no": row.identification_no,
+                    "plate_no": row.plate_no,
+                    "territory_name": row.territory_name,
+                    "type_name": row.type_name,
+                    "company_name": row.company_name,
+                    "car_mark_name": row.car_mark_name,
+                    "car_model_name": row.car_model_name,
+                }
+            )
+
+        return {
+            "total": int(total),
+            "limit": limit,
+            "offset": offset,
+            "items": items,
+        }
+
     async def _get_documents_by_record(
         self, record_ids: list[int]
     ) -> dict[int, list[dict[str, Any]]]:

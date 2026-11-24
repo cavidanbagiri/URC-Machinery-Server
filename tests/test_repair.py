@@ -418,6 +418,44 @@ class RepairFilterTests(unittest.TestCase):
         )
 
 
+class RepairArchiveTests(unittest.TestCase):
+    """"Arşiv" sekmesi: kapanmış tamirler "Mevcut" listesinden ayrılır."""
+
+    def test_repository_accepts_archive_flag(self):
+        from inspect import signature
+
+        from repositories.repair_repository import RepairRepository
+
+        for method_name in ("_fetch_items", "fetch_paginated"):
+            with self.subTest(method=method_name):
+                params = signature(
+                    getattr(RepairRepository, method_name)
+                ).parameters
+                self.assertIn("archive", params)
+                self.assertIs(params["archive"].default, False)
+
+    def test_fetch_repairs_endpoint_exposes_the_archived_filter(self):
+        from inspect import signature
+
+        from routers.repair_router import fetch_repairs
+
+        params = signature(fetch_repairs).parameters
+        self.assertIn("archived", params)
+        default = params["archived"].default
+        self.assertIsNone(getattr(default, "default", default))
+
+    def test_archive_query_excludes_active_repairs(self):
+        from inspect import getsource
+
+        from repositories.repair_repository import RepairRepository
+
+        source = getsource(RepairRepository._fetch_items)
+        self.assertIn("if archive:", source)
+        self.assertIn("RepairRecordModel.status != ACTIVE_REPAIR_STATUS", source)
+        # Arşiv kendi sıralamasını kullanır: en son kapanan kayıt üstte.
+        self.assertIn("RepairRecordModel.exit_date.desc().nullslast()", source)
+
+
 class CarStatusLookupTests(unittest.TestCase):
     """The repair status row is renamed by hand, so the lookup must be tolerant.
 

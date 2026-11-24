@@ -32,6 +32,7 @@ from repositories.maintenance_repository import (
     validate_maintenance_interval,
 )
 from schemas.maintenance_schemas import (
+    MaintenanceArchiveItemSchema,
     MaintenanceCompleteSchema,
     MaintenanceDocumentSchema,
     MaintenanceFetchItemSchema,
@@ -694,6 +695,50 @@ class TrailerMachineExclusionTests(unittest.TestCase):
 
         source = getsource(MaintenanceRepository._fetch_items)
         self.assertIn("exclude_trailer_machines()", source)
+
+
+class MaintenanceArchiveTests(unittest.TestCase):
+    """Bakım sayfasının "Arşiv" sekmesi yapılan bakımları listeler."""
+
+    def test_records_endpoint_is_registered(self):
+        from routers.maintenance_router import router
+
+        routes = {
+            (route.path, tuple(sorted(route.methods)))
+            for route in router.routes
+            if hasattr(route, "methods")
+        }
+        self.assertIn(("/records", ("GET",)), routes)
+
+    def test_archive_repository_only_returns_completed_maintenances(self):
+        from inspect import getsource
+
+        source = getsource(MaintenanceRepository.fetch_records)
+        self.assertIn(
+            "MaintenanceRecordModel.record_type == record_type", source
+        )
+        self.assertIn('record_type: MaintenanceRecordType = "maintenance"', source)
+        # Hurda makinelerin kayıtları arşive de düşmez.
+        self.assertIn("exclude_scrap_machines()", source)
+
+    def test_archive_schema_carries_machine_labels(self):
+        item = MaintenanceArchiveItemSchema(
+            id=7,
+            machine_id=3,
+            record_type="maintenance",
+            record_date=date(2026, 11, 20),
+            interval_value=500.0,
+            counter_value=12_500.0,
+            usage_unit="hour",
+            identification_no="MK-001",
+            plate_no="34 ABC 123",
+            territory_name="Merkez",
+        )
+
+        self.assertEqual(item.identification_no, "MK-001")
+        self.assertEqual(item.plate_no, "34 ABC 123")
+        self.assertEqual(item.territory_name, "Merkez")
+        self.assertEqual(item.documents, [])
 
 
 if __name__ == "__main__":

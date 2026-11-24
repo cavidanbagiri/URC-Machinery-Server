@@ -32,6 +32,7 @@ from schemas.maintenance_schemas import (
     MaintenanceSortOrder,
     MaintenanceStatusCode,
     MaintenanceSummarySchema,
+    PaginatedMaintenanceArchiveSchema,
     PaginatedMaintenanceSchema,
     UsageUnit,
 )
@@ -142,6 +143,46 @@ async def fetch_maintenance_history(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Bakım geçmişi getirilemedi: {e}")
+
+
+@router.get("/records", response_model=PaginatedMaintenanceArchiveSchema)
+async def fetch_maintenance_records(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    search: Optional[str] = Query(None, max_length=100),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    usage_unit: Optional[UsageUnit] = Query(None),
+    territory_id: Optional[int] = Query(None),
+    type_id: Optional[int] = Query(None),
+    company_id: Optional[int] = Query(None),
+):
+    """Arşiv: bütün makinelerin tamamlanmış bakım kayıtları (en yeni önce).
+
+    Periyodik Bakım sayfası makine odaklıdır (her makine tek satır: planı ve
+    durumu). Geçmişte yapılan bakımlar ise kayıt odaklıdır ve buradan sayfalanır.
+    Sayaç kayıtları (``record_type="reading"``) arşive girmez.
+    """
+
+    try:
+        return await MaintenanceRepository(db).fetch_records(
+            limit=limit,
+            offset=offset,
+            search=search,
+            date_from=date_from,
+            date_to=date_to,
+            usage_unit=usage_unit,
+            territory_id=territory_id,
+            type_id=type_id,
+            company_id=company_id,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Bakım arşivi getirilemedi: {e}"
+        )
 
 
 @router.get("/documents/{document_id}")

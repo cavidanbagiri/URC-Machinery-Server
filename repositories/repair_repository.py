@@ -511,6 +511,7 @@ class RepairRepository:
         exit_date_from: Optional[date] = None,
         exit_date_to: Optional[date] = None,
         active_only: bool = True,
+        archive: bool = False,
     ) -> list[dict[str, Any]]:
         query = self._base_select()
         filters = []
@@ -529,8 +530,14 @@ class RepairRepository:
             )
         if status:
             filters.append(RepairRecordModel.status == status)
-        if active_only:
-            # Only open repairs are listed on the "Arızalı Ekipman" page.
+        if archive:
+            # "Arşiv" sekmesi: kapanmış (tamamlandı / iptal edildi) kayıtlar.
+            # Tamirde olanlar "Mevcut" sekmesinde kalır, aynı kayıt iki listede
+            # birden görünmez.
+            filters.append(RepairRecordModel.status != ACTIVE_REPAIR_STATUS)
+        elif active_only and not status:
+            # Only open repairs are listed on the "Arızalı Ekipman" page, unless
+            # a specific status is requested (archive tab, summary cards).
             filters.append(RepairRecordModel.status == ACTIVE_REPAIR_STATUS)
         if repair_type_id is not None:
             filters.append(RepairRecordModel.repair_type_id == repair_type_id)
@@ -582,12 +589,21 @@ class RepairRepository:
         if filters:
             query = query.where(*filters)
 
-        # Active repairs first, then newest entry date.
-        query = query.order_by(
-            case((RepairRecordModel.status == "tamirde", 0), else_=1),
-            RepairRecordModel.entry_date.desc(),
-            RepairRecordModel.id.desc(),
-        )
+        if archive:
+            # Arşivde en son kapanan kayıt üstte: gerçek çıkış tarihi, yoksa
+            # giriş tarihi. (Tamamlanmamış/iptal kayıtlarda çıkış boş olabilir.)
+            query = query.order_by(
+                RepairRecordModel.exit_date.desc().nullslast(),
+                RepairRecordModel.entry_date.desc(),
+                RepairRecordModel.id.desc(),
+            )
+        else:
+            # Active repairs first, then newest entry date.
+            query = query.order_by(
+                case((RepairRecordModel.status == "tamirde", 0), else_=1),
+                RepairRecordModel.entry_date.desc(),
+                RepairRecordModel.id.desc(),
+            )
         result = await self.db.execute(query)
         items = [self._row_to_item(row) for row in result.all()]
         documents = await self._documents_for([item["id"] for item in items])
@@ -628,6 +644,7 @@ class RepairRepository:
         notes: Optional[str] = None,
         exit_date_from: Optional[date] = None,
         exit_date_to: Optional[date] = None,
+        archive: bool = False,
     ) -> dict[str, Any]:
         if limit < 1:
             limit = 100
@@ -654,6 +671,7 @@ class RepairRepository:
             notes=notes,
             exit_date_from=exit_date_from,
             exit_date_to=exit_date_to,
+            archive=archive,
         )
         return {
             "total": len(items),

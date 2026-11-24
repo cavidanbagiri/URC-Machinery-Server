@@ -61,6 +61,9 @@ async def fetch_repairs(
     date_to: Optional[date] = Query(None),
     overdue: Optional[bool] = Query(None),
     due_soon: Optional[bool] = Query(None),
+    # ``true`` lists the archived (completed / cancelled) repairs instead of the
+    # open ones; the "Arşiv" tab of the Arızalı Ekipman page uses it.
+    archived: Optional[bool] = Query(None),
     # Per-column filters used by the table header inputs.
     identification_no: Optional[str] = Query(None, max_length=50),
     plate_no: Optional[str] = Query(None, max_length=50),
@@ -90,6 +93,7 @@ async def fetch_repairs(
             notes=notes,
             exit_date_from=exit_date_from,
             exit_date_to=exit_date_to,
+            archive=bool(archived),
         )
     except HTTPException:
         raise

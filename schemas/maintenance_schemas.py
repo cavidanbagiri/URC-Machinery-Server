@@ -204,3 +204,26 @@ class MaintenanceHistoryItemSchema(BaseModel):
     created_by_name: Optional[str] = None
     created_at: Optional[datetime] = None
     documents: list[MaintenanceDocumentSchema] = Field(default_factory=list)
+
+
+class MaintenanceArchiveItemSchema(MaintenanceHistoryItemSchema):
+    """A completed maintenance of **any** machine (the "Arşiv" tab).
+
+    Same record fields as the machine history plus the machine labels the
+    archive table shows in one row (identification no, plate, territory...).
+    """
+
+    identification_no: Optional[str] = None
+    plate_no: Optional[str] = None
+    territory_name: Optional[str] = None
+    type_name: Optional[str] = None
+    company_name: Optional[str] = None
+    car_mark_name: Optional[str] = None
+    car_model_name: Optional[str] = None
+
+
+class PaginatedMaintenanceArchiveSchema(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    items: list[MaintenanceArchiveItemSchema]
