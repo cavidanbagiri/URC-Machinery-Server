@@ -20,8 +20,12 @@ The spare-part header status says what the request is **waiting for** and is
 picked by the user when the request is created: ``onay_bekliyor`` (approval),
 ``odeme_bekliyor`` (payment) or ``firma_bekleniyor`` (delivery of the firm).
 Whether a part physically arrived is *not* a header state: every requested row
-carries its own ``is_arrived`` flag (``arrived_at`` keeps the moment), so one
-order with six parts can have three arrived and three still on the way.
+carries its own ``arrived_quantity`` (how many pieces of the ordered
+``quantity`` are on site, ``arrived_at`` keeps the moment), so one order with
+six parts can have three arrived, two partially arrived and one still on the
+way. ``is_arrived`` is derived from those two numbers and is only ``TRUE`` once
+the whole ordered quantity arrived — the warehouse "Gelen Talepler" list looks
+at that flag.
 
 ``spare_part_request_types`` is the "Talep Türü" lookup (``Arıza``,
 ``Yedek Bakım``) seeded by the migration and editable through the API.
@@ -194,6 +198,10 @@ class SparePartRequestItemModel(Base):
             "quantity > 0",
             name="ck_spare_part_request_items_quantity_positive",
         ),
+        CheckConstraint(
+            "arrived_quantity >= 0",
+            name="ck_spare_part_request_items_arrived_quantity_non_negative",
+        ),
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -224,12 +232,22 @@ class SparePartRequestItemModel(Base):
     description_ru = Column(String(500), nullable=True)
     description_tr = Column(String(500), nullable=True)
     quantity = Column(Numeric(12, 3), nullable=False)
+    #: Kaç adet geldi? ``quantity`` sipariş edilen miktardır; kısmi teslimde
+    #: ``0 < arrived_quantity < quantity`` olur (tabloda "Kısmi Geldi").
+    arrived_quantity = Column(
+        Numeric(12, 3),
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+    )
     unit = Column(String(MAX_UNIT_LENGTH), nullable=False)
     supply_date = Column(Date, nullable=True)
 
-    #: "Geldi mi?" — the arrival is per row, so a request with six parts can
-    #: have three arrived and three still on the way. ``arrived_at`` keeps the
-    #: moment the row was ticked (cleared when the tick is removed).
+    #: "Geldi mi?" — ``arrived_quantity`` siparişin tamamına ulaştığında TRUE
+    #: olur ve depo tarafı bu satırı "Gelen Talepler" listesinde görür. Kısmi
+    #: teslimde FALSE kalır (satır yine de "Kısmi Geldi" olarak gösterilir).
+    #: ``arrived_at`` keeps the moment the row was ticked (cleared when the
+    #: tick is removed).
     is_arrived = Column(
         Boolean,
         nullable=False,

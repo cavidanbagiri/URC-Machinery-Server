@@ -3,9 +3,16 @@
 
 One row is one rental: which equipment was rented, from which company, at
 which site and between which dates.  The rented equipment is *not* part of
-``all_machines`` (it is not our fleet), so the equipment, company and site are
-hand-typed free text and the row never affects maintenance, repair or machine
-status.
+``all_machines`` (it is not our fleet), so it is described with the same
+vocabulary as the fleet — makine tipi (``type_transports``), marka
+(``car_marks``), model (``car_models``) and a free-text ``plate_no`` — plus the
+free-text company and site.  The row never affects maintenance, repair or
+machine status.
+
+``equipment_name`` is still stored: it is the one-line label the diesel ledger
+(``machine_rental_fuel_logs``) shows and searches.  The repository rebuilds it
+from the structured fields on every create / update with
+:func:`compose_equipment_name`, so the label can never contradict the columns.
 
 The table derives a status from the two dates instead of storing it, so a
 rental cannot get stuck in a stale state:
@@ -51,6 +58,48 @@ RENTAL_STATUS_LABELS = {
 #: Every accepted status code, in table order.
 RENTAL_STATUSES = tuple(RENTAL_STATUS_LABELS)
 
+#: Separator used when the stored ``equipment_name`` label is rebuilt.
+EQUIPMENT_LABEL_SEPARATOR = " · "
+
+
+def clean_label_part(value: Optional[str]) -> str:
+    """Trim and collapse repeated whitespace of one equipment label part."""
+
+    return " ".join((value or "").split())
+
+
+def compose_equipment_name(
+    *,
+    type_name: Optional[str] = None,
+    mark_name: Optional[str] = None,
+    model_name: Optional[str] = None,
+    plate_no: Optional[str] = None,
+    fallback: Optional[str] = None,
+) -> str:
+    """Build the one-line equipment label from the structured fields.
+
+    ``"Ekskavatör · CAT · 320D · 34 ABC 123"`` — empty parts are skipped, so a
+    rental that only has a type reads just ``"Ekskavatör"``.  When no structured
+    field is set, ``fallback`` (the legacy free-text name) is returned instead;
+    this keeps old rows and old API clients working.
+    """
+
+    parts = [
+        part
+        for part in (
+            clean_label_part(type_name),
+            clean_label_part(mark_name),
+            clean_label_part(model_name),
+            clean_label_part(plate_no),
+        )
+        if part
+    ]
+
+    if parts:
+        return EQUIPMENT_LABEL_SEPARATOR.join(parts)
+
+    return clean_label_part(fallback)
+
 
 def resolve_rental_status(
     start_date: date,
@@ -87,8 +136,34 @@ class MachineRentalModel(Base):
 
     id = Column(Integer, primary_key=True, index=True)
 
-    #: Ekipman tanımı — free text, e.g. "CAT 320D Ekskavatör".
+    #: Ekipman tanımı — one-line label rebuilt by the repository from the
+    #: structured fields below (kept for the diesel ledger label / search).
     equipment_name = Column(String(200), nullable=False)
+
+    #: Makine tipi — same lookup table as the fleet (``type_transports``).
+    machine_type_id = Column(
+        Integer,
+        ForeignKey("type_transports.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    #: Marka — ``car_marks`` lookup.
+    car_mark_id = Column(
+        Integer,
+        ForeignKey("car_marks.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    #: Model — ``car_models`` lookup.
+    car_model_id = Column(
+        Integer,
+        ForeignKey("car_models.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    #: Plaka — free text, rented equipment may have no plate at all.
+    plate_no = Column(String(50), nullable=True, index=True)
+
     #: Firma — the company the equipment is rented from.
     company_name = Column(String(200), nullable=False)
     #: Şantiye — the site the equipment is working at.
@@ -122,11 +197,14 @@ class MachineRentalModel(Base):
 
 
 __all__ = [
+    "EQUIPMENT_LABEL_SEPARATOR",
     "RENTAL_STATUSES",
     "RENTAL_STATUS_ACTIVE",
     "RENTAL_STATUS_EXPIRED",
     "RENTAL_STATUS_LABELS",
     "RENTAL_STATUS_PLANNED",
     "MachineRentalModel",
+    "clean_label_part",
+    "compose_equipment_name",
     "resolve_rental_status",
 ]

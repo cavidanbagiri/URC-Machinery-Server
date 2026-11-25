@@ -2,6 +2,7 @@
 """Database access for spare-part and service purchase requests."""
 
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, Optional
 
 from fastapi import HTTPException
@@ -303,6 +304,7 @@ class PurchaseRequestRepository:
                     "description_ru": item.description_ru,
                     "description_tr": item.description_tr,
                     "quantity": float(item.quantity or 0),
+                    "arrived_quantity": float(item.arrived_quantity or 0),
                     "unit": item.unit,
                     "supply_date": item.supply_date,
                     "is_arrived": bool(item.is_arrived),
@@ -633,6 +635,9 @@ class PurchaseRequestRepository:
             item.description_ru = row.description_ru
             item.description_tr = row.description_tr
             item.quantity = row.quantity
+            # Sipariş miktarı küçüldüyse gelen adet yeni miktara çekilir;
+            # "Geldi" bayrağı her düzenlemede yeniden hesaplanır.
+            self._sync_item_arrival(item)
             item.unit = row.unit
             item.supply_date = row.supply_date
 
@@ -676,13 +681,42 @@ class PurchaseRequestRepository:
                 ),
             )
 
-    async def set_item_arrival(
-        self, request_id: int, item_id: int, is_arrived: bool
-    ) -> dict[str, Any]:
-        """Mark one row as arrived (or undo it) and return the whole request.
+    @staticmethod
+    def _sync_item_arrival(item: SparePartRequestItemModel) -> None:
+        """Gelen adedi sipariş miktarına sığdır ve ``is_arrived``'ı türet.
 
-        The list is refreshed from the response, so the row summary
-        (``arrived_count``) and the sub-table stay in sync.
+        Sipariş miktarı sonradan düşürüldüğünde gelen adet yeni miktara
+        çekilir; ``is_arrived`` yalnızca siparişin tamamı geldiğinde TRUE olur
+        (depo "Gelen Talepler" listesi bu bayrağa bakar). Hiç parça gelmediyse
+        ``arrived_at`` silinir.
+        """
+
+        ordered = Decimal(item.quantity or 0)
+        arrived = Decimal(item.arrived_quantity or 0)
+        if arrived < 0:
+            arrived = Decimal(0)
+        if ordered > 0 and arrived > ordered:
+            arrived = ordered
+
+        item.arrived_quantity = arrived
+        item.is_arrived = ordered > 0 and arrived >= ordered
+        if arrived <= 0:
+            item.arrived_at = None
+
+    async def set_item_arrival(
+        self,
+        request_id: int,
+        item_id: int,
+        is_arrived: Optional[bool] = None,
+        arrived_quantity: Optional[Decimal] = None,
+    ) -> dict[str, Any]:
+        """Kaydın kaç adedinin geldiğini yaz; bütün talep geri döner.
+
+        ``arrived_quantity`` sipariş miktarına kırpılır ve ``is_arrived``
+        buradan türetilir: ``0`` Gelmedi, siparişin tamamı Geldi, aradaki değer
+        Kısmi Geldi. Eski istemciler sadece ``is_arrived`` gönderir (TRUE = tüm
+        miktar, FALSE = sıfır). Liste yanıttan tazelendiği için satır özeti
+        (``arrived_count``) ve alt tablo aynı anda güncellenir.
         """
 
         result = await self.db.execute(
@@ -695,8 +729,21 @@ class PurchaseRequestRepository:
         if item is None:
             raise HTTPException(status_code=404, detail="Talep kalemi bulunamadı")
 
-        item.is_arrived = bool(is_arrived)
-        item.arrived_at = datetime.now(timezone.utc) if is_arrived else None
+        ordered = Decimal(item.quantity or 0)
+        if arrived_quantity is not None:
+            target = Decimal(arrived_quantity)
+        else:
+            target = ordered if is_arrived else Decimal(0)
+
+        if target < 0:
+            target = Decimal(0)
+        if ordered > 0 and target > ordered:
+            target = ordered
+
+        item.arrived_quantity = target
+        if target > 0:
+            item.arrived_at = datetime.now(timezone.utc)
+        self._sync_item_arrival(item)
         try:
             await self.db.commit()
         except Exception:

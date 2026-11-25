@@ -9,7 +9,7 @@ helpers used by the list endpoint.
 """
 
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException
@@ -476,7 +476,36 @@ class SparePartRequestUpdateSchemaTests(unittest.TestCase):
 
 
 class SparePartItemArrivalSchemaTests(unittest.TestCase):
-    def test_accepts_the_flag(self):
+    def test_accepts_the_arrived_quantity(self):
+        from schemas.purchase_request_schemas import (
+            SparePartItemArrivalUpdateSchema,
+        )
+
+        parsed = SparePartItemArrivalUpdateSchema(arrived_quantity="2")
+        self.assertEqual(parsed.arrived_quantity, Decimal("2"))
+        self.assertIsNone(parsed.is_arrived)
+
+    def test_partial_quantity_may_be_zero(self):
+        from schemas.purchase_request_schemas import (
+            SparePartItemArrivalUpdateSchema,
+        )
+
+        self.assertEqual(
+            SparePartItemArrivalUpdateSchema(arrived_quantity=0).arrived_quantity,
+            Decimal("0"),
+        )
+
+    def test_negative_or_precise_quantity_is_rejected(self):
+        from schemas.purchase_request_schemas import (
+            SparePartItemArrivalUpdateSchema,
+        )
+
+        with self.assertRaises(ValidationError):
+            SparePartItemArrivalUpdateSchema(arrived_quantity=-1)
+        with self.assertRaises(ValidationError):
+            SparePartItemArrivalUpdateSchema(arrived_quantity="1.2345")
+
+    def test_still_accepts_the_legacy_flag(self):
         from schemas.purchase_request_schemas import (
             SparePartItemArrivalUpdateSchema,
         )
@@ -488,7 +517,7 @@ class SparePartItemArrivalSchemaTests(unittest.TestCase):
             SparePartItemArrivalUpdateSchema(is_arrived=False).is_arrived
         )
 
-    def test_flag_is_required_and_extra_fields_are_rejected(self):
+    def test_one_value_is_required_and_extra_fields_are_rejected(self):
         from schemas.purchase_request_schemas import (
             SparePartItemArrivalUpdateSchema,
         )
@@ -508,6 +537,30 @@ class ArrivalModelTests(unittest.TestCase):
         self.assertFalse(columns["is_arrived"].nullable)
         self.assertEqual(str(columns["is_arrived"].server_default.arg), "false")
         self.assertTrue(columns["arrived_at"].nullable)
+
+    def test_item_rows_carry_the_arrived_quantity(self):
+        from models.purchase_request_model import SparePartRequestItemModel
+
+        columns = SparePartRequestItemModel.__table__.columns
+        arrived = columns["arrived_quantity"]
+
+        self.assertFalse(arrived.nullable)
+        self.assertEqual(arrived.type.precision, 12)
+        self.assertEqual(arrived.type.scale, 3)
+        self.assertEqual(str(arrived.server_default.arg), "0")
+
+        # Kısmi teslimi negatif miktarla kaydetmek DB'de de engellenir.
+        constraints = {
+            constraint.name: str(constraint.sqltext)
+            for constraint in SparePartRequestItemModel.__table__.constraints
+            if constraint.name
+        }
+        self.assertEqual(
+            constraints[
+                "ck_spare_part_request_items_arrived_quantity_non_negative"
+            ],
+            "arrived_quantity >= 0",
+        )
 
     def test_item_rows_keep_the_typed_machine_number(self):
         from models.purchase_request_model import SparePartRequestItemModel
@@ -551,6 +604,7 @@ class ArrivalModelTests(unittest.TestCase):
             id=1, machine_id=2, quantity=3, unit="Adet"
         )
         self.assertFalse(item_schema.is_arrived)
+        self.assertEqual(item_schema.arrived_quantity, 0)
         self.assertIsNone(item_schema.arrived_at)
 
         data = payload()
@@ -581,6 +635,7 @@ class ArrivalModelTests(unittest.TestCase):
             list(arrival_params)[:4],
             ["self", "request_id", "item_id", "is_arrived"],
         )
+        self.assertIn("arrived_quantity", arrival_params)
 
     def test_router_registers_update_and_arrival_endpoints(self):
         from routers.purchase_request_router import router
@@ -596,6 +651,59 @@ class ArrivalModelTests(unittest.TestCase):
             ("/spare-parts/{request_id}/items/{item_id}/arrival", ("PATCH",)),
             routes,
         )
+
+
+class ArrivalSyncTests(unittest.TestCase):
+    """Gelen adet -> ``is_arrived`` / kalan türetimi (veritabanı olmadan)."""
+
+    def make_item(self, quantity: str, arrived: str):
+        from models.purchase_request_model import SparePartRequestItemModel
+
+        return SparePartRequestItemModel(
+            quantity=Decimal(quantity), arrived_quantity=Decimal(arrived)
+        )
+
+    def sync(self, item):
+        from repositories.purchase_request_repository import (
+            PurchaseRequestRepository,
+        )
+
+        PurchaseRequestRepository._sync_item_arrival(item)
+        return item
+
+    def test_partial_arrival_keeps_the_row_open(self):
+        item = self.sync(self.make_item("3", "2"))
+
+        self.assertEqual(item.arrived_quantity, Decimal("2"))
+        self.assertFalse(item.is_arrived)
+
+    def test_full_arrival_ticks_the_row(self):
+        item = self.sync(self.make_item("3", "3"))
+
+        self.assertEqual(item.arrived_quantity, Decimal("3"))
+        self.assertTrue(item.is_arrived)
+
+    def test_arrived_quantity_is_clamped_to_the_order(self):
+        item = self.sync(self.make_item("3", "5"))
+
+        self.assertEqual(item.arrived_quantity, Decimal("3"))
+        self.assertTrue(item.is_arrived)
+
+    def test_shrinking_the_order_clamps_a_partial_arrival(self):
+        item = self.sync(self.make_item("2", "3"))
+
+        self.assertEqual(item.arrived_quantity, Decimal("2"))
+        self.assertTrue(item.is_arrived)
+
+    def test_zero_arrival_clears_the_moment(self):
+        item = self.make_item("3", "0")
+        item.arrived_at = datetime.now(timezone.utc)
+
+        self.sync(item)
+
+        self.assertEqual(item.arrived_quantity, Decimal("0"))
+        self.assertFalse(item.is_arrived)
+        self.assertIsNone(item.arrived_at)
 
 
 if __name__ == "__main__":

@@ -932,8 +932,8 @@ class WarehouseRepository:
                     detail=(
                         f"'{request.stf_htf_no}' talebindeki "
                         f"'{item.part_number or f'Kalem #{item.id}'}' kalemi "
-                        "'Geldi' olarak işaretlenmemiş; önce satın alma "
-                        "tarafından işaretlenmeli"
+                        "'Geldi' olarak işaretlenmemiş (siparişin tamamı "
+                        "gelmemiş); önce satın alma tarafından tamamlanmalı"
                     ),
                 )
 

@@ -1,6 +1,7 @@
 # routers/rental_machine_router.py
 """API for the Kiralık Makine (rented machine) agreements."""
 
+from datetime import date
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -16,6 +17,7 @@ from repositories.rental_machine_repository import (
     RentalMachineRepository,
 )
 from schemas.rental_machine_schemas import (
+    MAX_PLATE_LENGTH,
     PaginatedRentalMachinesSchema,
     RentalMachineCreateSchema,
     RentalMachineItemSchema,
@@ -37,8 +39,23 @@ async def fetch_rental_machines(
     offset: int = Query(0, ge=0),
     search: Optional[str] = Query(None, max_length=100),
     status: Optional[str] = Query(None, max_length=20),
+    # Excel-style column filters of the table header.
+    machine_type_id: Optional[int] = Query(None, ge=1),
+    car_mark_id: Optional[int] = Query(None, ge=1),
+    car_model_id: Optional[int] = Query(None, ge=1),
+    plate: Optional[str] = Query(None, max_length=MAX_PLATE_LENGTH),
+    company: Optional[str] = Query(None, max_length=100),
+    site: Optional[str] = Query(None, max_length=100),
+    start_from: Optional[date] = Query(None),
+    start_to: Optional[date] = Query(None),
+    end_from: Optional[date] = Query(None),
+    end_to: Optional[date] = Query(None),
 ):
-    """Paged rental rows with the status derived from their dates."""
+    """Paged rental rows with the status derived from their dates.
+
+    The response also carries ``type_stats`` — per-machine-type counters for
+    the statistics panel, computed with the same filters except the type one.
+    """
 
     try:
         return await RentalMachineRepository(db).fetch_paginated(
@@ -46,6 +63,16 @@ async def fetch_rental_machines(
             offset=offset,
             search=search,
             status=status,
+            machine_type_id=machine_type_id,
+            car_mark_id=car_mark_id,
+            car_model_id=car_model_id,
+            plate=plate,
+            company=company,
+            site=site,
+            start_from=start_from,
+            start_to=start_to,
+            end_from=end_from,
+            end_to=end_to,
         )
     except HTTPException:
         raise

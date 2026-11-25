@@ -9,6 +9,7 @@ the SQL status filter and the route table.
 """
 
 import unittest
+import inspect
 from collections import namedtuple
 from datetime import date
 from types import SimpleNamespace
@@ -25,29 +26,48 @@ from models.rental_machine_model import (
     RENTAL_STATUS_PLANNED,
     RENTAL_STATUSES,
     MachineRentalModel,
+    compose_equipment_name,
     resolve_rental_status,
 )
 from repositories.rental_machine_repository import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
+    UNKNOWN_TYPE_NAME,
     RentalMachineRepository,
+    contains_condition,
     rental_status_condition,
+    type_stats_statement,
 )
 from routers import rental_machine_router
 from schemas.rental_machine_schemas import (
     MAX_COMPANY_NAME_LENGTH,
+    MAX_PLATE_LENGTH,
     PaginatedRentalMachinesSchema,
     RentalMachineCreateSchema,
     RentalMachineItemSchema,
+    RentalMachineTypeStatSchema,
     RentalMachineUpdateSchema,
 )
 
-ROW = namedtuple("ROW", ["rental", "creator_firstname", "creator_lastname"])
+ROW = namedtuple(
+    "ROW",
+    [
+        "rental",
+        "machine_type_name",
+        "car_mark_name",
+        "car_model_name",
+        "creator_firstname",
+        "creator_lastname",
+    ],
+)
 
 
 def payload(**overrides):
     data = {
-        "equipment_name": "CAT 320D Ekskavatör",
+        "machine_type_id": 4,
+        "car_mark_id": 2,
+        "car_model_id": 9,
+        "plate_no": "34 ABC 123",
         "company_name": "Ustay Kiralama A.Ş.",
         "site_name": "Merkez Şantiye",
         "start_date": date(2026, 11, 1),
@@ -60,7 +80,11 @@ def payload(**overrides):
 def rental(**overrides):
     data = {
         "id": 7,
-        "equipment_name": "CAT 320D Ekskavatör",
+        "equipment_name": "Ekskavatör · CAT · 320D · 34 ABC 123",
+        "machine_type_id": 4,
+        "car_mark_id": 2,
+        "car_model_id": 9,
+        "plate_no": "34 ABC 123",
         "company_name": "Ustay Kiralama A.Ş.",
         "site_name": "Merkez Şantiye",
         "start_date": date(2026, 11, 1),
@@ -71,6 +95,20 @@ def rental(**overrides):
     }
     data.update(overrides)
     return SimpleNamespace(**data)
+
+
+def row(rental_row=None, firstname=None, lastname=None, **names):
+    """Build the ``_base_select`` row shape the repository maps."""
+
+    rental_row = rental_row or rental()
+    return ROW(
+        rental_row,
+        names.get("machine_type_name", "Ekskavatör"),
+        names.get("car_mark_name", "CAT"),
+        names.get("car_model_name", "320D"),
+        firstname,
+        lastname,
+    )
 
 
 def compile_sql(condition):
@@ -86,22 +124,36 @@ class RentalMachineSchemaTests(unittest.TestCase):
     def test_valid_payload_is_parsed(self):
         parsed = RentalMachineCreateSchema(**payload())
 
-        self.assertEqual(parsed.equipment_name, "CAT 320D Ekskavatör")
+        self.assertEqual(parsed.machine_type_id, 4)
+        self.assertEqual(parsed.car_mark_id, 2)
+        self.assertEqual(parsed.car_model_id, 9)
+        self.assertEqual(parsed.plate_no, "34 ABC 123")
         self.assertEqual(parsed.start_date, date(2026, 11, 1))
         self.assertEqual(parsed.end_date, date(2026, 12, 31))
 
     def test_names_collapse_repeated_whitespace(self):
         parsed = RentalMachineCreateSchema(
             **payload(
-                equipment_name="  CAT   320D   Ekskavatör ",
+                plate_no="  34   ABC 123 ",
                 company_name=" Ustay   Kiralama ",
                 site_name=" Merkez  Şantiye ",
             )
         )
 
-        self.assertEqual(parsed.equipment_name, "CAT 320D Ekskavatör")
+        self.assertEqual(parsed.plate_no, "34 ABC 123")
         self.assertEqual(parsed.company_name, "Ustay Kiralama")
         self.assertEqual(parsed.site_name, "Merkez Şantiye")
+
+    def test_legacy_equipment_name_only_payload_is_accepted(self):
+        data = payload()
+        for field in ("machine_type_id", "car_mark_id", "car_model_id", "plate_no"):
+            data.pop(field)
+        data["equipment_name"] = "  CAT   320D   Ekskavatör "
+
+        parsed = RentalMachineCreateSchema(**data)
+
+        self.assertEqual(parsed.equipment_name, "CAT 320D Ekskavatör")
+        self.assertIsNone(parsed.machine_type_id)
 
     def test_blank_names_are_rejected(self):
         for field in ("equipment_name", "company_name", "site_name"):
@@ -109,18 +161,47 @@ class RentalMachineSchemaTests(unittest.TestCase):
                 with self.assertRaises(ValidationError):
                     RentalMachineCreateSchema(**payload(**{field: "   "}))
 
-    def test_missing_name_is_rejected(self):
-        for field in ("equipment_name", "company_name", "site_name"):
+    def test_missing_company_and_site_are_rejected(self):
+        for field in ("company_name", "site_name"):
             with self.subTest(field=field):
                 data = payload()
                 data.pop(field)
                 with self.assertRaises(ValidationError):
                     RentalMachineCreateSchema(**data)
 
+    def test_empty_equipment_is_rejected(self):
+        data = payload()
+        for field in ("machine_type_id", "car_mark_id", "car_model_id", "plate_no"):
+            data.pop(field)
+
+        with self.assertRaises(ValidationError):
+            RentalMachineCreateSchema(**data)
+
+    def test_plate_only_whitespace_means_no_plate(self):
+        data = payload()
+        for field in ("machine_type_id", "car_mark_id", "car_model_id"):
+            data.pop(field)
+
+        parsed = RentalMachineCreateSchema(**payload(plate_no="   "))
+
+        self.assertIsNone(parsed.plate_no)
+        # Still valid, because the machine type is set.
+        self.assertEqual(parsed.machine_type_id, 4)
+
+        data.pop("plate_no")
+        with self.assertRaises(ValidationError):
+            RentalMachineCreateSchema(**data)
+
     def test_overlong_name_is_rejected(self):
         with self.assertRaises(ValidationError):
             RentalMachineCreateSchema(
                 **payload(company_name="A" * (MAX_COMPANY_NAME_LENGTH + 1))
+            )
+
+    def test_overlong_plate_is_rejected(self):
+        with self.assertRaises(ValidationError):
+            RentalMachineCreateSchema(
+                **payload(plate_no="A" * (MAX_PLATE_LENGTH + 1))
             )
 
     def test_end_before_start_is_rejected(self):
@@ -174,6 +255,10 @@ class RentalMachineSchemaTests(unittest.TestCase):
         item = RentalMachineItemSchema(
             id=7,
             **payload(),
+            equipment_name="Ekskavatör · CAT · 320D · 34 ABC 123",
+            machine_type_name="Ekskavatör",
+            car_mark_name="CAT",
+            car_model_name="320D",
             status=RENTAL_STATUS_ACTIVE,
             status_label="Aktif",
             days_remaining=10,
@@ -182,12 +267,35 @@ class RentalMachineSchemaTests(unittest.TestCase):
 
         self.assertEqual(item.status, "aktif")
         self.assertEqual(item.duration_days, 61)
+        self.assertEqual(item.machine_type_name, "Ekskavatör")
+        self.assertEqual(item.plate_no, "34 ABC 123")
         self.assertIsNone(item.created_by_name)
+
+    def test_type_stat_schema_accepts_both_known_and_unknown_types(self):
+        known = RentalMachineTypeStatSchema(
+            type_id=4,
+            type_name="Ekskavatör",
+            total=3,
+            active_count=2,
+            planned_count=1,
+            expired_count=0,
+        )
+        unknown = RentalMachineTypeStatSchema(
+            type_name=UNKNOWN_TYPE_NAME,
+            total=1,
+            active_count=1,
+            planned_count=0,
+            expired_count=0,
+        )
+
+        self.assertEqual(known.type_id, 4)
+        self.assertIsNone(unknown.type_id)
 
     def test_paginated_schema_defaults_to_no_items(self):
         page = PaginatedRentalMachinesSchema(total=0, limit=50, offset=0)
 
         self.assertEqual(page.items, [])
+        self.assertEqual(page.type_stats, [])
 
 
 class RentalStatusRuleTests(unittest.TestCase):
@@ -264,6 +372,43 @@ class RentalStatusRuleTests(unittest.TestCase):
         self.assertEqual(RENTAL_STATUS_LABELS[RENTAL_STATUS_ACTIVE], "Aktif")
 
 
+class EquipmentLabelTests(unittest.TestCase):
+    def test_all_parts_are_joined(self):
+        self.assertEqual(
+            compose_equipment_name(
+                type_name="Ekskavatör",
+                mark_name="CAT",
+                model_name="320D",
+                plate_no="34 ABC 123",
+            ),
+            "Ekskavatör · CAT · 320D · 34 ABC 123",
+        )
+
+    def test_empty_parts_are_skipped(self):
+        self.assertEqual(
+            compose_equipment_name(type_name="Ekskavatör", plate_no="34 ABC 123"),
+            "Ekskavatör · 34 ABC 123",
+        )
+
+    def test_parts_are_trimmed_and_collapsed(self):
+        self.assertEqual(
+            compose_equipment_name(type_name="  Ekskavatör ", mark_name=" CAT  "),
+            "Ekskavatör · CAT",
+        )
+
+    def test_fallback_is_used_when_nothing_structured_is_set(self):
+        self.assertEqual(
+            compose_equipment_name(fallback="  CAT   320D  "),
+            "CAT 320D",
+        )
+
+    def test_structured_fields_win_over_the_fallback(self):
+        self.assertEqual(
+            compose_equipment_name(type_name="Ekskavatör", fallback="CAT 320D"),
+            "Ekskavatör",
+        )
+
+
 class RentalMachineModelTests(unittest.TestCase):
     def test_table_name(self):
         self.assertEqual(MachineRentalModel.__tablename__, "machine_rentals")
@@ -280,6 +425,36 @@ class RentalMachineModelTests(unittest.TestCase):
         ):
             with self.subTest(field=field):
                 self.assertFalse(columns[field].nullable)
+
+    def test_equipment_columns_are_optional(self):
+        columns = MachineRentalModel.__table__.columns
+
+        for field in (
+            "machine_type_id",
+            "car_mark_id",
+            "car_model_id",
+            "plate_no",
+        ):
+            with self.subTest(field=field):
+                self.assertTrue(columns[field].nullable)
+
+    def test_equipment_lookups_use_set_null(self):
+        expectations = {
+            "machine_type_id": "type_transports",
+            "car_mark_id": "car_marks",
+            "car_model_id": "car_models",
+        }
+
+        for column, table in expectations.items():
+            with self.subTest(column=column):
+                foreign_key = next(
+                    iter(MachineRentalModel.__table__.c[column].foreign_keys)
+                )
+                self.assertEqual(foreign_key.column.table.name, table)
+                self.assertEqual(foreign_key.ondelete, "SET NULL")
+
+    def test_plate_length_matches_the_schema(self):
+        self.assertEqual(MachineRentalModel.__table__.c.plate_no.type.length, 50)
 
     def test_dates_use_the_date_type(self):
         columns = MachineRentalModel.__table__.columns
@@ -310,7 +485,7 @@ class RentalMachineRepositoryTests(unittest.TestCase):
 
     def test_row_mapping_for_an_active_rental(self):
         item = self.repository._row_to_item(
-            ROW(rental(), "Ali", "Veli"),
+            row(rental(), "Ali", "Veli"),
             today=date(2026, 11, 22),
         )
 
@@ -320,10 +495,15 @@ class RentalMachineRepositoryTests(unittest.TestCase):
         self.assertEqual(item["days_remaining"], 39)
         self.assertEqual(item["duration_days"], 61)
         self.assertEqual(item["created_by_name"], "Ali Veli")
+        self.assertEqual(item["machine_type_id"], 4)
+        self.assertEqual(item["machine_type_name"], "Ekskavatör")
+        self.assertEqual(item["car_mark_name"], "CAT")
+        self.assertEqual(item["car_model_name"], "320D")
+        self.assertEqual(item["plate_no"], "34 ABC 123")
 
     def test_row_mapping_for_a_planned_rental(self):
         item = self.repository._row_to_item(
-            ROW(
+            row(
                 rental(
                     start_date=date(2026, 12, 1),
                     end_date=date(2026, 12, 10),
@@ -341,7 +521,7 @@ class RentalMachineRepositoryTests(unittest.TestCase):
 
     def test_row_mapping_for_an_expired_rental(self):
         item = self.repository._row_to_item(
-            ROW(
+            row(
                 rental(
                     start_date=date(2026, 10, 1),
                     end_date=date(2026, 11, 20),
@@ -356,6 +536,29 @@ class RentalMachineRepositoryTests(unittest.TestCase):
         self.assertEqual(item["status_label"], "Süresi doldu")
         self.assertEqual(item["days_remaining"], -2)
         self.assertEqual(item["created_by_name"], "Ayşe")
+
+    def test_row_mapping_keeps_legacy_rows_readable(self):
+        item = self.repository._row_to_item(
+            row(
+                rental(
+                    machine_type_id=None,
+                    car_mark_id=None,
+                    car_model_id=None,
+                    plate_no=None,
+                    equipment_name="CAT 320D Ekskavatör",
+                ),
+                None,
+                None,
+                machine_type_name=None,
+                car_mark_name=None,
+                car_model_name=None,
+            ),
+            today=date(2026, 11, 22),
+        )
+
+        self.assertEqual(item["equipment_name"], "CAT 320D Ekskavatör")
+        self.assertIsNone(item["machine_type_id"])
+        self.assertIsNone(item["machine_type_name"])
 
     def test_status_filter_for_planned_rentals(self):
         sql = compile_sql(
@@ -387,17 +590,74 @@ class RentalMachineRepositoryTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.status_code, 400)
 
-    def test_search_matches_all_three_text_columns(self):
+    def test_search_matches_the_label_and_free_text_columns(self):
         filters = self.repository._filters(search="  cat ")
 
         sql = compile_sql(filters[0])
 
-        for column in ("equipment_name", "company_name", "site_name"):
+        for column in (
+            "equipment_name",
+            "company_name",
+            "site_name",
+            "plate_no",
+        ):
             self.assertIn(column, sql)
         self.assertIn("%cat%", sql)
 
     def test_empty_search_adds_no_filter(self):
         self.assertEqual(self.repository._filters(search="   "), [])
+
+    def test_contains_condition_is_empty_for_blank_values(self):
+        for value in (None, "", "   "):
+            with self.subTest(value=value):
+                self.assertIsNone(
+                    contains_condition(MachineRentalModel.plate_no, value)
+                )
+
+    def test_company_and_site_filters_use_ilike(self):
+        filters = self.repository._filters(company="ustay", site="merkez")
+
+        self.assertEqual(2, len(filters))
+        self.assertIn("company_name ILIKE", compile_sql(filters[0]))
+        self.assertIn("%ustay%", compile_sql(filters[0]))
+        self.assertIn("site_name ILIKE", compile_sql(filters[1]))
+        self.assertIn("%merkez%", compile_sql(filters[1]))
+
+    def test_lookup_filters_select_the_foreign_keys(self):
+        filters = self.repository._filters(
+            machine_type_id=4,
+            car_mark_id=2,
+            car_model_id=9,
+        )
+
+        self.assertEqual(3, len(filters))
+        self.assertIn("machine_type_id = 4", compile_sql(filters[0]))
+        self.assertIn("car_mark_id = 2", compile_sql(filters[1]))
+        self.assertIn("car_model_id = 9", compile_sql(filters[2]))
+
+    def test_date_range_filters_are_inclusive(self):
+        filters = self.repository._filters(
+            start_from=date(2026, 11, 1),
+            start_to=date(2026, 11, 30),
+            end_from=date(2026, 12, 1),
+            end_to=date(2026, 12, 31),
+        )
+
+        sql = [compile_sql(condition) for condition in filters]
+
+        self.assertIn("start_date >= '2026-11-01'", sql[0])
+        self.assertIn("start_date <= '2026-11-30'", sql[1])
+        self.assertIn("end_date >= '2026-12-01'", sql[2])
+        self.assertIn("end_date <= '2026-12-31'", sql[3])
+
+    def test_type_stats_statement_groups_by_machine_type(self):
+        sql = compile_sql(type_stats_statement([], date(2026, 11, 22)))
+
+        self.assertIn("GROUP BY", sql)
+        self.assertIn("type_transports", sql)
+        self.assertIn("count(machine_rentals.id)", sql)
+        self.assertIn("CASE", sql)
+        self.assertIn("active_count", sql)
 
     def test_pagination_limits(self):
         self.assertEqual(DEFAULT_LIMIT, 50)
@@ -416,6 +676,27 @@ class RentalMachineRouterTests(unittest.TestCase):
         self.assertIn(("/create", ("POST",)), routes)
         self.assertIn(("/update/{rental_id}", ("PUT",)), routes)
         self.assertIn(("/delete/{rental_id}", ("DELETE",)), routes)
+
+    def test_list_endpoint_accepts_the_column_filters(self):
+        signature = inspect.signature(
+            rental_machine_router.fetch_rental_machines
+        )
+        parameters = set(signature.parameters)
+
+        for name in (
+            "machine_type_id",
+            "car_mark_id",
+            "car_model_id",
+            "plate",
+            "company",
+            "site",
+            "start_from",
+            "start_to",
+            "end_from",
+            "end_to",
+        ):
+            with self.subTest(parameter=name):
+                self.assertIn(name, parameters)
 
     def test_create_returns_201_and_delete_204(self):
         statuses = {

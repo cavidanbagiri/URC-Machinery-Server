@@ -166,11 +166,26 @@ class SparePartRequestUpdateSchema(SparePartRequestCreateSchema):
 
 
 class SparePartItemArrivalUpdateSchema(BaseModel):
-    """The "geldi / gelmedi" flag of one part row of a request."""
+    """Kaç adet geldi: ``arrived_quantity`` (yoksa eski ``is_arrived``).
+
+    ``arrived_quantity`` sipariş miktarına göre repository'de kırpılır: ``0``
+    "Gelmedi", siparişin tamamı "Geldi", aradaki değer "Kısmi Geldi" demektir.
+    Eski istemciler için ``is_arrived`` kabul edilir: ``TRUE`` tüm miktar,
+    ``FALSE`` sıfır. Alanlardan en az biri gönderilmelidir.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    is_arrived: bool
+    arrived_quantity: Optional[Decimal] = Field(
+        None, ge=0, max_digits=12, decimal_places=3
+    )
+    is_arrived: Optional[bool] = None
+
+    @model_validator(mode="after")
+    def require_arrival_value(self):
+        if self.arrived_quantity is None and self.is_arrived is None:
+            raise ValueError("arrived_quantity veya is_arrived gönderilmelidir")
+        return self
 
 
 class SparePartStatusUpdateSchema(BaseModel):
@@ -250,10 +265,14 @@ class SparePartRequestItemSchema(BaseModel):
     description_ru: Optional[str] = None
     description_tr: Optional[str] = None
     quantity: float = 0
+    #: Sipariş edilen ``quantity`` içinden kaç adet geldi. ``0`` Gelmedi,
+    #: tamamı Geldi, aradaki değer Kısmi Geldi'dir; kalan = quantity - bu değer.
+    arrived_quantity: float = 0
     unit: str = ""
     supply_date: Optional[date] = None
 
-    #: "Geldi mi?" — tracked per row, the header only says what is awaited.
+    #: Siparişin tamamı geldi mi? ``arrived_quantity >= quantity`` iken TRUE
+    #: (depo "Gelen Talepler" listesi bu bayrağa bakar).
     is_arrived: bool = False
     arrived_at: Optional[datetime] = None
 

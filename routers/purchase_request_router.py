@@ -192,11 +192,14 @@ async def update_spare_part_item_arrival(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[UserModel, Depends(require_write_permission)],
 ):
-    """Toggle "geldi / gelmedi" of one part row; the whole request comes back."""
+    """Kaç adet geldiğini yaz ("Gelmedi" / "Kısmi Geldi" / "Geldi"); talep döner."""
 
     try:
         return await PurchaseRequestRepository(db).set_item_arrival(
-            request_id, item_id, data.is_arrived
+            request_id,
+            item_id,
+            is_arrived=data.is_arrived,
+            arrived_quantity=data.arrived_quantity,
         )
     except HTTPException:
         raise
