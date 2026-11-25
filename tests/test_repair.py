@@ -24,6 +24,7 @@ from repositories.repair_repository import (
     build_created_message,
     build_garage_breakdown,
     build_quick_open_message,
+    build_type_breakdown,
     build_updated_message,
     compute_active_ratio,
     compute_repair_timing,
@@ -36,6 +37,7 @@ from schemas.repair_schemas import (
     RepairCreateSchema,
     RepairNoteCreateSchema,
     RepairSummarySchema,
+    RepairSummaryTypeSchema,
     RepairUpdateSchema,
 )
 
@@ -176,6 +178,51 @@ class RepairSummaryTests(unittest.TestCase):
         self.assertEqual(len(breakdown), 1)
         self.assertEqual(breakdown[0]["count"], 1)
         self.assertEqual(breakdown[0]["active_count"], 1)
+
+    def test_type_breakdown_splits_archive_counters(self):
+        items = [
+            {"repair_type_id": 1, "status": "tamirde", "duration_days": None},
+            {"repair_type_id": 1, "status": "tamamlandi", "duration_days": 4},
+            {"repair_type_id": 1, "status": "tamamlandi", "duration_days": 2},
+            {"repair_type_id": 1, "status": "iptal", "duration_days": None},
+            {"repair_type_id": 2, "status": "tamamlandi", "duration_days": 7},
+        ]
+
+        breakdown = build_type_breakdown(
+            items, [(1, "Mekanik"), (2, "Elektrik"), (3, "Lastik")]
+        )
+
+        self.assertEqual(
+            [entry["name"] for entry in breakdown],
+            ["Mekanik", "Elektrik", "Lastik"],
+        )
+        self.assertEqual([entry["count"] for entry in breakdown], [4, 1, 0])
+        self.assertEqual([entry["active_count"] for entry in breakdown], [1, 0, 0])
+        self.assertEqual([entry["completed_count"] for entry in breakdown], [2, 1, 0])
+        self.assertEqual([entry["cancelled_count"] for entry in breakdown], [1, 0, 0])
+        self.assertEqual([entry["archived_count"] for entry in breakdown], [3, 1, 0])
+        self.assertEqual(
+            [entry["average_repair_days"] for entry in breakdown], [3.0, 7.0, None]
+        )
+
+    def test_type_breakdown_ignores_cancelled_durations(self):
+        breakdown = build_type_breakdown(
+            [{"repair_type_id": 1, "status": "iptal", "duration_days": 9}],
+            [(1, "Mekanik")],
+        )
+
+        self.assertEqual(breakdown[0]["archived_count"], 1)
+        self.assertIsNone(breakdown[0]["average_repair_days"])
+
+    def test_summary_type_schema_defaults_archive_fields(self):
+        entry = RepairSummaryTypeSchema(
+            repair_type_id=1, name="Mekanik", count=2, active_count=1
+        )
+
+        self.assertEqual(entry.completed_count, 0)
+        self.assertEqual(entry.cancelled_count, 0)
+        self.assertEqual(entry.archived_count, 0)
+        self.assertIsNone(entry.average_repair_days)
 
     def test_summary_schema_defaults_new_cards(self):
         summary = RepairSummarySchema(

@@ -237,6 +237,12 @@ class RepairSummaryTypeSchema(BaseModel):
     name: str
     count: int
     active_count: int
+    # Arşiv sekmesinin "Tamir Tipine Göre İstatistik" paneli: kapanmış
+    # (tamamlandı / iptal edildi) kayıtlar ve tipin ortalama tamir süresi.
+    completed_count: int = 0
+    cancelled_count: int = 0
+    archived_count: int = 0
+    average_repair_days: Optional[float] = None
 
 
 class RepairSummaryGarageSchema(BaseModel):

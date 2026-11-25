@@ -190,6 +190,54 @@ def build_garage_breakdown(
     return breakdown
 
 
+def build_type_breakdown(
+    items: list[dict[str, Any]],
+    repair_types: list[tuple[int, str]],
+) -> list[dict[str, Any]]:
+    """Group repair items by repair type (``Tamir Tipi``).
+
+    ``repair_types`` holds ``(id, name)`` pairs in display order; types without
+    records stay in the list with zeroed counters so the archive panel can list
+    the whole catalogue. ``count`` / ``active_count`` mirror the "Devam eden"
+    tab, while ``completed_count`` + ``cancelled_count`` (summed in
+    ``archived_count``) describe the "Arşiv" tab. ``average_repair_days`` is the
+    mean duration of the completed records of that type; cancelled records have
+    no duration and are ignored.
+    """
+
+    grouped: dict[Optional[int], list[dict[str, Any]]] = {}
+    for item in items:
+        grouped.setdefault(item.get("repair_type_id"), []).append(item)
+
+    breakdown = []
+    for repair_type_id, name in repair_types:
+        type_items = grouped.get(repair_type_id, [])
+        completed = [item for item in type_items if item.get("status") == "tamamlandi"]
+        cancelled = [item for item in type_items if item.get("status") == "iptal"]
+        durations = [
+            item["duration_days"]
+            for item in completed
+            if item.get("duration_days") is not None
+        ]
+        breakdown.append(
+            {
+                "repair_type_id": repair_type_id,
+                "name": name,
+                "count": len(type_items),
+                "active_count": sum(
+                    1 for item in type_items if item.get("status") == "tamirde"
+                ),
+                "completed_count": len(completed),
+                "cancelled_count": len(cancelled),
+                "archived_count": len(completed) + len(cancelled),
+                "average_repair_days": (
+                    round(sum(durations) / len(durations), 1) if durations else None
+                ),
+            }
+        )
+    return breakdown
+
+
 # =========================================================
 # REPOSITORY
 # =========================================================
@@ -702,21 +750,9 @@ class RepairRepository:
             select(RepairTypeModel).order_by(RepairTypeModel.name.asc())
         )
         type_rows = list(type_result.scalars().all())
-        by_type = []
-        for repair_type in type_rows:
-            type_items = [
-                item for item in items if item["repair_type_id"] == repair_type.id
-            ]
-            by_type.append(
-                {
-                    "repair_type_id": repair_type.id,
-                    "name": repair_type.name,
-                    "count": len(type_items),
-                    "active_count": sum(
-                        1 for item in type_items if item["status"] == "tamirde"
-                    ),
-                }
-            )
+        by_type = build_type_breakdown(
+            items, [(repair_type.id, repair_type.name) for repair_type in type_rows]
+        )
 
         garage_result = await self.db.execute(
             select(GarageServiceModel.id, GarageServiceModel.name).order_by(
