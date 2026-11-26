@@ -36,6 +36,7 @@ from schemas.isg_schemas import (
     IsgNonconformityItemSchema,
     IsgNonconformityUpdateSchema,
     IsgOverviewSchema,
+    IsgProjectSummarySchema,
     IsgResponsiblesSchema,
     IsgStatusUpdateSchema,
     PaginatedIsgSchema,
@@ -96,6 +97,21 @@ async def fetch_isg_overview(db: Annotated[AsyncSession, Depends(get_db)]):
         raise HTTPException(
             status_code=500,
             detail=f"ISG istatistikleri getirilemedi: {e}",
+        )
+
+
+@router.get("/project_summary", response_model=IsgProjectSummarySchema)
+async def fetch_isg_project_summary(db: Annotated[AsyncSession, Depends(get_db)]):
+    """Open/closed counts per project (site) — the dashboard table."""
+
+    try:
+        return await IsgRepository(db).fetch_project_summary()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"ISG proje özeti getirilemedi: {e}",
         )
 
 

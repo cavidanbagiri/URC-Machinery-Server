@@ -84,6 +84,61 @@ def summarize_overview(rows) -> dict[str, int]:
     }
 
 
+def summarize_projects(rows) -> dict[str, Any]:
+    """Turn ``(territory_id, territory_name, status, count)`` rows into one
+    line per project (site) for the dashboard summary table.
+
+    Unlike :func:`summarize_overview`, no site is special-cased: every project
+    that owns at least one record appears, so a new site in Ayarlar shows up
+    without a code change.  The busiest project (most open records) comes
+    first, then the larger one; the name breaks ties alphabetically.
+    """
+
+    projects: dict[int, dict[str, Any]] = {}
+    open_total = 0
+    closed_total = 0
+
+    for territory_id, territory_name, status, count in rows:
+        amount = int(count or 0)
+        is_closed = status == ISG_STATUS_CLOSED
+
+        if is_closed:
+            closed_total += amount
+        else:
+            open_total += amount
+
+        entry = projects.get(territory_id)
+        if entry is None:
+            entry = {
+                "territory_id": territory_id,
+                "territory_name": (territory_name or "").strip() or "—",
+                "open": 0,
+                "closed": 0,
+                "total": 0,
+            }
+            projects[territory_id] = entry
+
+        entry["closed" if is_closed else "open"] += amount
+        entry["total"] += amount
+
+    items = sorted(
+        projects.values(),
+        key=lambda item: (
+            -item["open"],
+            -item["total"],
+            item["territory_name"].casefold(),
+        ),
+    )
+
+    return {
+        "project_count": len(items),
+        "total": open_total + closed_total,
+        "open_total": open_total,
+        "closed_total": closed_total,
+        "items": items,
+    }
+
+
 def joined_names(firstname: Optional[str], lastname: Optional[str]) -> Optional[str]:
     """``"Ayşe Yılmaz"`` (or ``None``) — the creator / closer line of a row."""
 
@@ -388,6 +443,29 @@ class IsgRepository:
         )
         return summarize_overview(result.all())
 
+    async def fetch_project_summary(self) -> dict[str, Any]:
+        """Open/closed counts per project (site) — the dashboard table."""
+
+        result = await self.db.execute(
+            select(
+                TerritoryModel.id,
+                TerritoryModel.name,
+                IsgNonconformityModel.status,
+                func.count(IsgNonconformityModel.id),
+            )
+            .select_from(IsgNonconformityModel)
+            .join(
+                TerritoryModel,
+                IsgNonconformityModel.territory_id == TerritoryModel.id,
+            )
+            .group_by(
+                TerritoryModel.id,
+                TerritoryModel.name,
+                IsgNonconformityModel.status,
+            )
+        )
+        return summarize_projects(result.all())
+
     # =========================================================
     # WRITE
     # =========================================================
@@ -541,4 +619,5 @@ __all__ = [
     "IsgRepository",
     "joined_names",
     "summarize_overview",
+    "summarize_projects",
 ]

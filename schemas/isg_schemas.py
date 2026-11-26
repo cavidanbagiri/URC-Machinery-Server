@@ -169,6 +169,30 @@ class IsgOverviewSchema(BaseModel):
     sites_closed_total: int = 0
 
 
+class IsgProjectSummaryItemSchema(BaseModel):
+    """One line of the dashboard table: a project (site) and its counts.
+
+    ``open`` + ``closed`` is always ``total``; a site is listed only while it
+    owns at least one record.
+    """
+
+    territory_id: int
+    territory_name: str
+    open: int = 0
+    closed: int = 0
+    total: int = 0
+
+
+class IsgProjectSummarySchema(BaseModel):
+    """``GET /api/isg/project_summary`` — open/closed counts per project."""
+
+    project_count: int = 0
+    total: int = 0
+    open_total: int = 0
+    closed_total: int = 0
+    items: list[IsgProjectSummaryItemSchema] = Field(default_factory=list)
+
+
 class IsgResponsiblesSchema(BaseModel):
     items: list[str] = Field(default_factory=list)
 
@@ -180,6 +204,8 @@ __all__ = [
     "IsgNonconformityUpdateSchema",
     "IsgNonconformityWriteSchema",
     "IsgOverviewSchema",
+    "IsgProjectSummaryItemSchema",
+    "IsgProjectSummarySchema",
     "IsgResponsiblesSchema",
     "IsgSeverity",
     "IsgStatus",

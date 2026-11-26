@@ -46,11 +46,13 @@ from repositories.isg_repository import (
     IsgRepository,
     joined_names,
     summarize_overview,
+    summarize_projects,
 )
 from routers import isg_router
 from schemas.isg_schemas import (
     IsgNonconformityCreateSchema,
     IsgNonconformityItemSchema,
+    IsgProjectSummarySchema,
     IsgStatusUpdateSchema,
     canonical_responsible,
 )
@@ -359,6 +361,88 @@ class IsgOverviewTests(unittest.TestCase):
         self.assertIsInstance(overview["total"], int)
 
 
+class IsgProjectSummaryTests(unittest.TestCase):
+    def test_counts_are_grouped_per_project(self):
+        rows = [
+            (1, "SRU", ISG_STATUS_OPEN, 3),
+            (1, "SRU", ISG_STATUS_CLOSED, 2),
+            (2, "DCU", ISG_STATUS_OPEN, 4),
+            (2, "DCU", ISG_STATUS_CLOSED, 1),
+            (3, "Merkez Şantiye", ISG_STATUS_CLOSED, 5),
+        ]
+
+        summary = summarize_projects(rows)
+
+        self.assertEqual(summary["project_count"], 3)
+        self.assertEqual(summary["total"], 15)
+        self.assertEqual(summary["open_total"], 7)
+        self.assertEqual(summary["closed_total"], 8)
+
+        by_id = {item["territory_id"]: item for item in summary["items"]}
+        self.assertEqual(by_id[1]["open"], 3)
+        self.assertEqual(by_id[1]["closed"], 2)
+        self.assertEqual(by_id[1]["total"], 5)
+        self.assertEqual(by_id[2]["open"], 4)
+        self.assertEqual(by_id[2]["closed"], 1)
+        self.assertEqual(by_id[3]["open"], 0)
+        self.assertEqual(by_id[3]["closed"], 5)
+
+    def test_items_are_sorted_by_open_then_total_then_name(self):
+        rows = [
+            (1, "SRU", ISG_STATUS_OPEN, 2),
+            (1, "SRU", ISG_STATUS_CLOSED, 6),
+            (2, "DCU", ISG_STATUS_OPEN, 2),
+            (2, "DCU", ISG_STATUS_CLOSED, 1),
+            (3, "Merkez", ISG_STATUS_CLOSED, 1),
+        ]
+
+        names = [item["territory_name"] for item in summarize_projects(rows)["items"]]
+
+        # SRU and DCU have 2 open each; SRU has the bigger total, then the
+        # project with nothing open closes the list.
+        self.assertEqual(names, ["SRU", "DCU", "Merkez"])
+
+    def test_project_name_is_trimmed_and_blank_falls_back(self):
+        rows = [
+            (1, "  SRU  ", ISG_STATUS_OPEN, 1),
+            (2, "   ", ISG_STATUS_CLOSED, 1),
+        ]
+
+        summary = summarize_projects(rows)
+
+        self.assertEqual(summary["items"][0]["territory_name"], "SRU")
+        self.assertEqual(summary["items"][1]["territory_name"], "—")
+
+    def test_empty_rows_return_empty_items_and_zero_totals(self):
+        summary = summarize_projects([])
+
+        self.assertEqual(summary["items"], [])
+        self.assertEqual(summary["project_count"], 0)
+        self.assertEqual(summary["total"], 0)
+        self.assertEqual(summary["open_total"], 0)
+        self.assertEqual(summary["closed_total"], 0)
+
+    def test_string_counts_are_cast_to_int(self):
+        summary = summarize_projects([(1, "SRU", ISG_STATUS_OPEN, "3")])
+
+        item = summary["items"][0]
+        self.assertEqual(item["open"], 3)
+        self.assertEqual(item["total"], 3)
+        self.assertIsInstance(summary["total"], int)
+
+    def test_summary_matches_the_project_summary_schema(self):
+        summary = summarize_projects(
+            [(1, "SRU", ISG_STATUS_OPEN, 2), (1, "SRU", ISG_STATUS_CLOSED, 1)]
+        )
+
+        parsed = IsgProjectSummarySchema(**summary)
+
+        self.assertEqual(parsed.project_count, 1)
+        self.assertEqual(parsed.items[0].territory_name, "SRU")
+        self.assertEqual(parsed.items[0].open, 2)
+        self.assertEqual(parsed.items[0].closed, 1)
+
+
 class IsgRepositoryFilterTests(unittest.TestCase):
     def setUp(self):
         self.repository = IsgRepository(db=None)
@@ -559,6 +643,7 @@ class IsgRouterTests(unittest.TestCase):
 
         self.assertIn(("/fetch_nonconformities", ("GET",)), routes)
         self.assertIn(("/overview", ("GET",)), routes)
+        self.assertIn(("/project_summary", ("GET",)), routes)
         self.assertIn(("/responsibles", ("GET",)), routes)
         self.assertIn(("/create", ("POST",)), routes)
         self.assertIn(("/update/{item_id}", ("PUT",)), routes)
