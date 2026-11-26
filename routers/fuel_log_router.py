@@ -158,7 +158,9 @@ async def create_rental_fuel_log(
     """Append a diesel row for a **rented** machine (Kiralık sekmesi).
 
     Rented equipment has no fleet ID, so the row references the rental
-    agreement; like the machine ledger, existing rows are never changed.
+    agreement; like the machine ledger, existing rows are never changed.  The
+    optional ``km`` / ``engine_hours`` values are stored on the same row, i.e.
+    the counter reading is timestamped by the diesel date itself.
     """
     try:
         repository = RentalFuelLogRepository(db)
@@ -178,6 +180,12 @@ async def create_rental_fuel_log(
             rental_id=log.rental_id,
             fuel_date=log.fuel_date,
             liters=float(log.liters),
+            km=float(log.km) if log.km is not None else None,
+            engine_hours=(
+                float(log.engine_hours)
+                if log.engine_hours is not None
+                else None
+            ),
             given_by=log.given_by,
             note=log.note,
             entered_by_id=log.created_by_id,

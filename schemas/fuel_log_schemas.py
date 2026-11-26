@@ -65,6 +65,10 @@ class RentalFuelLogCreateSchema(BaseModel):
     Rented equipment has no fleet ID, so the row points at the rental
     agreement (``machine_rentals.id``) instead of ``all_machines``.  The rest of
     the payload is identical to :class:`FuelLogCreateSchema`.
+
+    ``km`` / ``engine_hours`` are the counter readings **at the moment the
+    diesel was handed over**.  They are optional because a rental may expose
+    only one counter and older rows have neither.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -72,6 +76,8 @@ class RentalFuelLogCreateSchema(BaseModel):
     rental_id: int = Field(..., gt=0)
     fuel_date: date
     liters: float = Field(..., gt=0, le=1_000_000)
+    km: Optional[float] = Field(None, ge=0, le=100_000_000)
+    engine_hours: Optional[float] = Field(None, ge=0, le=1_000_000)
     given_by: Optional[str] = Field(None, max_length=MAX_GIVEN_BY_LENGTH)
     note: Optional[str] = Field(None, max_length=MAX_NOTE_LENGTH)
 
@@ -109,6 +115,8 @@ class RentalFuelLogEntrySchema(BaseModel):
     rental_id: int
     fuel_date: date
     liters: float
+    km: Optional[float] = None
+    engine_hours: Optional[float] = None
     given_by: str
     note: Optional[str] = None
     entered_by_id: Optional[int] = None
@@ -188,6 +196,14 @@ class FuelLogRentalMachineSchema(BaseModel):
     monthly_liters: float = 0
     total_liters: float = 0
     total_entry_count: int = 0
+
+    #: Newest counter reading entered with a diesel row up to the selected day
+    #: ("Güncel KM / Saat").  Each column is independent — a rental may track
+    #: only KM or only engine hours — and ``last_meter_date`` is the day of the
+    #: newest reading among the two.
+    last_km: Optional[float] = None
+    last_engine_hours: Optional[float] = None
+    last_meter_date: Optional[date] = None
 
 
 class FuelDistributionDaySchema(BaseModel):

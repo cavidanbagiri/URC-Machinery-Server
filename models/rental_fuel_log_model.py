@@ -9,6 +9,13 @@ the ledger points at the ``machine_rentals`` agreement instead of a machine.
 Like :class:`models.fuel_log_model.MachineFuelLogModel` the table is
 append-only: every save inserts one row, a correction is another row, and the
 rows are aggregated per rental for the **Mazot Dağılımı → Kiralık** tab.
+
+Rented equipment has no row in ``machine_meter_logs`` (it is not part of
+``all_machines``), yet the site still needs the counter reading at the moment
+of refuelling.  ``km`` and ``engine_hours`` are therefore optional columns of
+the diesel row itself: both stay ``NULL`` for old rows, and a rental may track
+only one of the two counters.  The newest non-null value per column is the
+rental's current KM / engine hour on the tab.
 """
 
 from datetime import date
@@ -38,6 +45,14 @@ class MachineRentalFuelLogModel(Base):
             "liters > 0",
             name="ck_machine_rental_fuel_logs_liters_positive",
         ),
+        CheckConstraint(
+            "km IS NULL OR km >= 0",
+            name="ck_machine_rental_fuel_logs_km_non_negative",
+        ),
+        CheckConstraint(
+            "engine_hours IS NULL OR engine_hours >= 0",
+            name="ck_machine_rental_fuel_logs_engine_hours_non_negative",
+        ),
         Index(
             "ix_machine_rental_fuel_logs_rental_date",
             "rental_id",
@@ -64,6 +79,13 @@ class MachineRentalFuelLogModel(Base):
     )
 
     liters = Column(Float, nullable=False)
+
+    #: Counter readings at the moment the diesel was handed over.  Optional:
+    #: old rows (and clients that only track litres) leave them ``NULL``, and a
+    #: rental may have only a KM or only an engine-hour meter.
+    km = Column(Float, nullable=True)
+    engine_hours = Column(Float, nullable=True)
+
     given_by = Column(String(150), nullable=False)
     note = Column(Text, nullable=True)
 
@@ -83,7 +105,12 @@ class MachineRentalFuelLogModel(Base):
     created_by = relationship("UserModel")
 
     def __str__(self) -> str:
-        return f"{self.rental_id} - {self.fuel_date} - {self.liters} L"
+        meter = ""
+        if self.km is not None:
+            meter += f" - {self.km} km"
+        if self.engine_hours is not None:
+            meter += f" - {self.engine_hours} h"
+        return f"{self.rental_id} - {self.fuel_date} - {self.liters} L{meter}"
 
 
 __all__ = ["MachineRentalFuelLogModel"]

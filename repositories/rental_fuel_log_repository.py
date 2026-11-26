@@ -13,6 +13,11 @@ three things from this module:
 The ledger is append-only: there is no update or delete method.  The status of
 each rental is derived from its dates on the **selected day**, so the badge of
 the tab always matches the day whose rows are shown.
+
+A diesel row may also carry the rental's **KM / engine-hour** reading at the
+moment of refuelling (``machine_rental_fuel_logs.km`` / ``engine_hours``).
+:meth:`fetch_section` exposes the newest non-null value per column up to the
+selected day so the tab can show the current counter without a second ledger.
 """
 
 from datetime import date
@@ -31,6 +36,12 @@ from models.rental_machine_model import (
 from schemas.fuel_log_schemas import RentalFuelLogCreateSchema
 
 NOT_FOUND_DETAIL = "Kiralık makine kaydı bulunamadı"
+
+#: How many recent readings per rental are inspected when looking for the
+#: newest KM and engine-hour values.  Looking at a handful of rows (instead of
+#: only the newest one) keeps the two counters independent: a row that records
+#: only KM must not hide the engine hour entered the day before.
+METER_HISTORY_DEPTH = 12
 
 
 class RentalFuelLogRepository:
@@ -193,10 +204,15 @@ class RentalFuelLogRepository:
                     "monthly_liters": float(row.monthly_liters or 0),
                     "total_liters": float(row.total_liters or 0),
                     "total_entry_count": int(row.total_entry_count or 0),
+                    # Filled by ``_attach_latest_meters`` below.
+                    "last_km": None,
+                    "last_engine_hours": None,
+                    "last_meter_date": None,
                 }
             )
 
         await self._attach_last_entries(items, target)
+        await self._attach_latest_meters(items, target)
 
         return {
             "rental_total": float(totals_row.total or 0) if totals_row else 0.0,
@@ -257,6 +273,73 @@ class RentalFuelLogRepository:
             item["last_note"] = row.note
             item["last_created_at"] = row.created_at
 
+    async def _attach_latest_meters(
+        self,
+        items: list[dict[str, Any]],
+        target_date: date,
+    ) -> None:
+        """Fill the newest KM / engine-hour reading up to ``target_date``.
+
+        The two counters are handled independently: an excavator may only have
+        engine hours, a truck only KM.  Recent readings are ranked newest-first
+        per rental and the first non-null value of each column wins, so a row
+        that stores just one counter never erases the other one.
+        """
+
+        if not items:
+            return
+
+        ranked = (
+            select(
+                MachineRentalFuelLogModel.rental_id.label("rental_id"),
+                MachineRentalFuelLogModel.km.label("km"),
+                MachineRentalFuelLogModel.engine_hours.label("engine_hours"),
+                MachineRentalFuelLogModel.fuel_date.label("fuel_date"),
+                func.row_number()
+                .over(
+                    partition_by=MachineRentalFuelLogModel.rental_id,
+                    order_by=[
+                        MachineRentalFuelLogModel.fuel_date.desc(),
+                        MachineRentalFuelLogModel.created_at.desc(),
+                        MachineRentalFuelLogModel.id.desc(),
+                    ],
+                )
+                .label("row_number"),
+            )
+            .where(
+                MachineRentalFuelLogModel.rental_id.in_(
+                    [item["rental_id"] for item in items]
+                ),
+                MachineRentalFuelLogModel.fuel_date <= target_date,
+                or_(
+                    MachineRentalFuelLogModel.km.isnot(None),
+                    MachineRentalFuelLogModel.engine_hours.isnot(None),
+                ),
+            )
+            .subquery()
+        )
+
+        result = await self.db.execute(
+            select(ranked)
+            .where(ranked.c.row_number <= METER_HISTORY_DEPTH)
+            .order_by(ranked.c.row_number)
+        )
+
+        by_rental = {item["rental_id"]: item for item in items}
+        for row in result.all():
+            item = by_rental.get(row.rental_id)
+            if item is None:
+                continue
+            if item["last_km"] is None and row.km is not None:
+                item["last_km"] = float(row.km)
+            if (
+                item["last_engine_hours"] is None
+                and row.engine_hours is not None
+            ):
+                item["last_engine_hours"] = float(row.engine_hours)
+            if item["last_meter_date"] is None:
+                item["last_meter_date"] = row.fuel_date
+
     # ---------- WRITE (INSERT ONLY) ----------
 
     async def create_log(
@@ -273,6 +356,14 @@ class RentalFuelLogRepository:
             rental_id=data.rental_id,
             fuel_date=data.fuel_date,
             liters=float(data.liters),
+            # Counter readings captured with the same save; the form leaves
+            # them empty for equipment without a KM / hour meter.
+            km=float(data.km) if data.km is not None else None,
+            engine_hours=(
+                float(data.engine_hours)
+                if data.engine_hours is not None
+                else None
+            ),
             # The table has no *Yakıtı veren* input; the router passes the
             # signed-in user's name as the fallback.
             given_by=data.given_by or given_by or "Sistem",

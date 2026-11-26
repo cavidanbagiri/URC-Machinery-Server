@@ -5,8 +5,8 @@ Run from ``server/``:
 
 These tests never touch PostgreSQL.  They cover the write schema, the overview
 fields the Kiralık tab reads, the append-only table definition, the rental
-search / ordering helpers and the *rental does not exist* guard of
-``create_log``.
+search / ordering helpers, the optional KM / engine-hour readings stored on the
+diesel row and the *rental does not exist* guard of ``create_log``.
 """
 
 import unittest
@@ -93,6 +93,42 @@ class RentalFuelLogSchemaTests(unittest.TestCase):
 
         self.assertIsNone(payload.given_by)
 
+    def test_meter_readings_are_optional(self):
+        """Eski istemciler KM / saat göndermeden litre kaydedebilir."""
+
+        payload = RentalFuelLogCreateSchema(
+            rental_id=7,
+            fuel_date=date(2026, 11, 22),
+            liters=10,
+        )
+
+        self.assertIsNone(payload.km)
+        self.assertIsNone(payload.engine_hours)
+
+    def test_meter_readings_are_kept_on_the_diesel_row(self):
+        payload = RentalFuelLogCreateSchema(
+            rental_id=7,
+            fuel_date=date(2026, 11, 22),
+            liters=120.5,
+            km=15_420,
+            engine_hours=0,
+        )
+
+        self.assertEqual(payload.km, 15_420)
+        # Sıfır geçerli bir okumadır (ör. yeni saat sayacı).
+        self.assertEqual(payload.engine_hours, 0)
+
+    def test_meter_readings_must_be_non_negative(self):
+        for field in ("km", "engine_hours"):
+            with self.subTest(field=field):
+                with self.assertRaises(ValidationError):
+                    RentalFuelLogCreateSchema(
+                        rental_id=7,
+                        fuel_date=date(2026, 11, 22),
+                        liters=10,
+                        **{field: -1},
+                    )
+
     def test_rental_id_must_be_positive(self):
         for value in (0, -3):
             with self.subTest(value=value):
@@ -129,7 +165,7 @@ class RentalFuelLogSchemaTests(unittest.TestCase):
                 rental_id=7,
                 fuel_date=date(2026, 11, 22),
                 liters=10,
-                km=123,
+                odometer=123,
             )
 
     def test_entry_schema_accepts_the_saved_row(self):
@@ -138,6 +174,8 @@ class RentalFuelLogSchemaTests(unittest.TestCase):
             rental_id=7,
             fuel_date=date(2026, 11, 22),
             liters=55.5,
+            km=9_840.5,
+            engine_hours=None,
             given_by="Depo Sorumlusu",
             note=None,
             entered_by_id=1,
@@ -147,6 +185,8 @@ class RentalFuelLogSchemaTests(unittest.TestCase):
 
         self.assertEqual(entry.rental_id, 7)
         self.assertEqual(entry.liters, 55.5)
+        self.assertEqual(entry.km, 9_840.5)
+        self.assertIsNone(entry.engine_hours)
         self.assertEqual(entry.entered_by_name, "Ayşe Yılmaz")
 
 
@@ -170,6 +210,9 @@ class RentalFuelLogReadSchemaTests(unittest.TestCase):
         self.assertEqual(row.total_entry_count, 0)
         self.assertIsNone(row.last_given_by)
         self.assertIsNone(row.last_created_at)
+        self.assertIsNone(row.last_km)
+        self.assertIsNone(row.last_engine_hours)
+        self.assertIsNone(row.last_meter_date)
 
     def test_rental_row_carries_the_day_and_totals(self):
         row = FuelLogRentalMachineSchema(
@@ -188,6 +231,9 @@ class RentalFuelLogReadSchemaTests(unittest.TestCase):
             monthly_liters=980,
             total_liters=2_400,
             total_entry_count=9,
+            last_km=15_420,
+            last_engine_hours=3_210.5,
+            last_meter_date=date(2026, 11, 22),
         )
 
         self.assertEqual(row.day_liters, 120.5)
@@ -197,6 +243,9 @@ class RentalFuelLogReadSchemaTests(unittest.TestCase):
         self.assertEqual(row.monthly_liters, 980)
         self.assertEqual(row.total_liters, 2_400)
         self.assertEqual(row.total_entry_count, 9)
+        self.assertEqual(row.last_km, 15_420)
+        self.assertEqual(row.last_engine_hours, 3_210.5)
+        self.assertEqual(row.last_meter_date, date(2026, 11, 22))
 
     def test_overview_defaults_rental_fields(self):
         """Eski istemciler için kiralık alanları varsayılanla gelir."""
@@ -282,6 +331,9 @@ class RentalFuelLogModelTests(unittest.TestCase):
 
         self.assertTrue(columns.note.nullable)
         self.assertTrue(columns.created_by_id.nullable)
+        # Sayaç okumaları isteğe bağlıdır: eski satırlar NULL kalır.
+        self.assertTrue(columns.km.nullable)
+        self.assertTrue(columns.engine_hours.nullable)
 
     def test_fuel_date_uses_the_date_type(self):
         self.assertIsInstance(
@@ -298,6 +350,14 @@ class RentalFuelLogModelTests(unittest.TestCase):
 
         self.assertIn(
             "ck_machine_rental_fuel_logs_liters_positive",
+            names,
+        )
+        self.assertIn(
+            "ck_machine_rental_fuel_logs_km_non_negative",
+            names,
+        )
+        self.assertIn(
+            "ck_machine_rental_fuel_logs_engine_hours_non_negative",
             names,
         )
 
@@ -420,6 +480,41 @@ class RentalFuelLogCreateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(log.created_by_id, 3)
         self.assertIs(db.refreshed, log)
 
+    async def test_meter_readings_are_stored_with_the_diesel_row(self):
+        db = FakeDb(stored_rental=rental())
+        repository = RentalFuelLogRepository(db=db)
+
+        log = await repository.create_log(
+            RentalFuelLogCreateSchema(
+                rental_id=7,
+                fuel_date=date(2026, 11, 22),
+                liters=120.5,
+                km=15_420,
+                engine_hours=3_210.5,
+            ),
+            user_id=3,
+            given_by="Ayşe Yılmaz",
+        )
+
+        self.assertEqual(log.km, 15_420)
+        self.assertEqual(log.engine_hours, 3_210.5)
+
+    async def test_missing_meter_readings_stay_null(self):
+        db = FakeDb(stored_rental=rental())
+        repository = RentalFuelLogRepository(db=db)
+
+        log = await repository.create_log(
+            RentalFuelLogCreateSchema(
+                rental_id=7,
+                fuel_date=date(2026, 11, 22),
+                liters=40,
+            ),
+            user_id=3,
+        )
+
+        self.assertIsNone(log.km)
+        self.assertIsNone(log.engine_hours)
+
     async def test_explicit_given_by_wins_over_the_fallback(self):
         db = FakeDb(stored_rental=rental())
         repository = RentalFuelLogRepository(db=db)
@@ -500,6 +595,12 @@ LAST_ENTRY_ROW = namedtuple(
     ["rental_id", "given_by", "note", "created_at"],
 )
 
+#: One ranked reading from ``_attach_latest_meters`` (newest first).
+METER_ROW = namedtuple(
+    "METER_ROW",
+    ["rental_id", "km", "engine_hours", "fuel_date"],
+)
+
 
 class RentalFuelLogSectionTests(unittest.IsolatedAsyncioTestCase):
     async def test_section_maps_rows_and_totals(self):
@@ -525,6 +626,9 @@ class RentalFuelLogSectionTests(unittest.IsolatedAsyncioTestCase):
                         datetime(2026, 11, 22, 18, 0, tzinfo=timezone.utc),
                     )
                 ],
+                [
+                    METER_ROW(7, 15_420.0, 3_210.5, date(2026, 11, 22)),
+                ],
             ]
         )
 
@@ -548,6 +652,14 @@ class RentalFuelLogSectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(item["total_entry_count"], 9)
         self.assertEqual(item["last_given_by"], "Ayşe Yılmaz")
         self.assertEqual(item["last_note"], "akşam dolumu")
+        self.assertEqual(item["last_km"], 15_420.0)
+        self.assertEqual(item["last_engine_hours"], 3_210.5)
+        self.assertEqual(item["last_meter_date"], date(2026, 11, 22))
+        # Dört sorgu: toplamlar, satırlar, "son kayıt" ve sayaç penceresi.
+        self.assertEqual(len(db.statements), 4)
+        meter_sql = compile_sql(db.statements[3])
+        self.assertIn("row_number", meter_sql)
+        self.assertIn("engine_hours", meter_sql)
 
     async def test_rental_without_fuel_rows_still_appears(self):
         db = ScriptedDb(
@@ -565,6 +677,7 @@ class RentalFuelLogSectionTests(unittest.IsolatedAsyncioTestCase):
                     )
                 ],
                 [],
+                [],
             ]
         )
 
@@ -581,8 +694,46 @@ class RentalFuelLogSectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(item["total_liters"], 0.0)
         self.assertEqual(item["total_entry_count"], 0)
         self.assertIsNone(item["last_given_by"])
-        # Üç sorgu: toplamlar, satırlar, "son kayıt" penceresi.
-        self.assertEqual(len(db.statements), 3)
+        self.assertIsNone(item["last_km"])
+        self.assertIsNone(item["last_engine_hours"])
+        self.assertIsNone(item["last_meter_date"])
+        # Dört sorgu: toplamlar, satırlar, "son kayıt" ve sayaç penceresi.
+        self.assertEqual(len(db.statements), 4)
+
+    async def test_latest_meter_readings_keep_km_and_hours_independent(self):
+        """Yalnız KM içeren yeni satır, önceki motor saatini silmez."""
+
+        db = ScriptedDb(
+            [
+                [SimpleNamespace(total=0, monthly=0, daily=0)],
+                [
+                    RENTAL_AGG_ROW(
+                        rental(),
+                        7,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                ],
+                [],
+                [
+                    METER_ROW(7, 15_420.0, None, date(2026, 11, 22)),
+                    METER_ROW(7, None, 3_210.5, date(2026, 11, 20)),
+                ],
+            ]
+        )
+
+        section = await RentalFuelLogRepository(db=db).fetch_section(
+            target_date=date(2026, 11, 22)
+        )
+
+        item = section["rental_machines"][0]
+        self.assertEqual(item["last_km"], 15_420.0)
+        self.assertEqual(item["last_engine_hours"], 3_210.5)
+        # Tarih, en yeni okumanın (KM) günüdür.
+        self.assertEqual(item["last_meter_date"], date(2026, 11, 22))
 
     async def test_empty_fleet_returns_zeroed_totals(self):
         db = ScriptedDb([[SimpleNamespace(total=None, monthly=None, daily=None)], []])
