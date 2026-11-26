@@ -26,6 +26,7 @@ def make_user(**overrides):
         "id": 7,
         "firstname": "  cavidan ",
         "lastname": "hesenli",
+        "email": "cavidan@example.com",
         "position": "Bakım Şefi",
         "image_id": 3,
         "image": SimpleNamespace(url="https://cdn.example.com/avatar.png"),
@@ -46,6 +47,7 @@ class BuildTeamMemberTests(unittest.TestCase):
 
         self.assertEqual(member["full_name"], "cavidan hesenli")
         self.assertEqual(member["firstname"], "cavidan")
+        self.assertEqual(member["email"], "cavidan@example.com")
         self.assertEqual(member["position"], "Bakım Şefi")
         self.assertEqual(member["status_text"], "Admin")
         self.assertEqual(member["image_url"], "https://cdn.example.com/avatar.png")
@@ -54,12 +56,13 @@ class BuildTeamMemberTests(unittest.TestCase):
 
     def test_member_without_position_or_photo(self):
         member = build_team_member(
-            make_user(position=None, image_id=None),
+            make_user(position=None, image_id=None, email=None),
             status_text=None,
             image_url="",
             current_user_id=1,
         )
 
+        self.assertEqual(member["email"], "")
         self.assertEqual(member["position"], "")
         self.assertEqual(member["status_text"], "")
         self.assertEqual(member["image_url"], "")
@@ -79,6 +82,7 @@ class BuildTeamMemberTests(unittest.TestCase):
         directory = TeamDirectorySchema(total=12, with_photo=4, items=[parsed])
 
         self.assertEqual(parsed.full_name, "cavidan hesenli")
+        self.assertEqual(parsed.email, "cavidan@example.com")
         self.assertEqual(directory.total, 12)
         self.assertEqual(directory.with_photo, 4)
 

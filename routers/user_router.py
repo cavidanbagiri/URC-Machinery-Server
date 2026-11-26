@@ -17,7 +17,8 @@ from schemas.user_schemas import (
 )
 
 # A valid access token is enough: the directory holds nothing but names,
-# job titles and profile photos that every signed-in user already sees.
+# work e-mails, job titles and profile photos that every signed-in user
+# already sees.
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
@@ -27,7 +28,7 @@ async def fetch_team(
     current_user: Annotated[UserModel, Depends(get_current_user)],
     limit: int = Query(DEFAULT_TEAM_LIMIT, ge=1, le=MAX_TEAM_LIMIT),
 ):
-    """Team members for the avatar stack plus the total user count."""
+    """Team members for the avatar stack and dashboard user table."""
 
     try:
         return await UserDirectoryRepository(db).list_team(

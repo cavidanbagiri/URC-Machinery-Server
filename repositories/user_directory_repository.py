@@ -1,8 +1,8 @@
 # repositories/user_directory_repository.py
 """Read-only user directory behind the dashboard avatar stack.
 
-Only public profile data is exposed (name, position, role label and a
-browser-usable photo URL). Passwords and token tables are never touched.
+Only public profile data is exposed (name, work e-mail, position, role label
+and a browser-usable photo URL). Passwords and token tables are never touched.
 """
 
 from typing import Any, Dict, Optional
@@ -45,6 +45,7 @@ def build_team_member(
         "firstname": firstname,
         "lastname": lastname,
         "full_name": f"{firstname} {lastname}".strip(),
+        "email": user.email or "",
         "position": user.position or "",
         "status_text": status_text or "",
         "image_url": image_url or "",

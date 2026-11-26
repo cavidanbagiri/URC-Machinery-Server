@@ -71,7 +71,7 @@ async def fetch_fuel_distribution(
         DEFAULT_DISTRIBUTION_DAYS,
         ge=1,
         le=MAX_DISTRIBUTION_DAYS,
-        description="Rolling window length in days (dashboard chart uses 7).",
+        description="Rolling window length in days (dashboard chart requests 10).",
     ),
     end_date: Optional[date] = Query(
         None,

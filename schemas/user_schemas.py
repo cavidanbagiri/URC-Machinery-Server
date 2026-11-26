@@ -1,5 +1,5 @@
 # schemas/user_schemas.py
-"""Payloads for the team directory shown as an avatar stack on the dashboard.
+"""Payloads for the team directory (dashboard avatar stack + user table).
 
 Kept separate from ``auth_schemas`` because the directory is a read-only,
 self-contained view: no password/hash fields and no write payloads.
@@ -14,7 +14,7 @@ MAX_TEAM_LIMIT = 24
 
 
 class TeamMemberSchema(BaseModel):
-    """One person in the avatar stack (photo is optional)."""
+    """One person in the directory (photo and e-mail are optional)."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -22,6 +22,8 @@ class TeamMemberSchema(BaseModel):
     firstname: str = ""
     lastname: str = ""
     full_name: str = ""
+    #: Work e-mail, shown in the dashboard user table (contact column).
+    email: str = ""
     position: str = ""
     status_text: str = ""
     image_url: str = ""
