@@ -4,7 +4,13 @@
 from datetime import date, datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 #: Free-text provider length, mirrored by the model column.  The page no longer
 #: asks for it: the backend stores the signed-in user's name when it is empty.
@@ -90,6 +96,91 @@ class RentalFuelLogCreateSchema(BaseModel):
     @classmethod
     def normalize_note(cls, value: Optional[str]) -> Optional[str]:
         return _clean_optional_text(value)
+
+
+def _ensure_not_future_fuel_date(value: Optional[date]) -> Optional[date]:
+    """A correction may move a row to an earlier day, never to the future.
+
+    The page already refuses future dates on insert; the correction dialog has
+    to enforce the same rule on the server because the row's date is now
+    editable (the classic mistake is entering the 24th's diesel on the 25th and
+    fixing the date afterwards).
+    """
+
+    if value is not None and value > date.today():
+        raise ValueError("Gelecek bir tarih için kayıt güncellenemez")
+    return value
+
+
+class FuelLogUpdateSchema(BaseModel):
+    """Correction of an existing machine diesel row.
+
+    Only the values the user actually changes are sent; every field is
+    optional and ``None`` means *leave it as it is*.  ``fuel_date`` is the
+    important one: a row saved on the wrong day is moved to the right day
+    instead of appending a second, compensating row.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    fuel_date: Optional[date] = None
+    liters: Optional[float] = Field(None, gt=0, le=1_000_000)
+    note: Optional[str] = Field(None, max_length=MAX_NOTE_LENGTH)
+
+    @field_validator("fuel_date")
+    @classmethod
+    def validate_fuel_date(cls, value: Optional[date]) -> Optional[date]:
+        return _ensure_not_future_fuel_date(value)
+
+    @field_validator("note")
+    @classmethod
+    def normalize_note(cls, value: Optional[str]) -> Optional[str]:
+        return _clean_optional_text(value)
+
+    @model_validator(mode="after")
+    def require_a_change(self):
+        if self.fuel_date is None and self.liters is None and self.note is None:
+            raise ValueError("Güncellenecek en az bir alan gönderilmelidir")
+        return self
+
+
+class RentalFuelLogUpdateSchema(BaseModel):
+    """Correction of an existing **Kiralık** diesel row.
+
+    The counter readings entered with the diesel row are editable too, because
+    a wrong date generally means a wrong KM / engine-hour value as well.
+    ``None`` keeps the stored column untouched.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    fuel_date: Optional[date] = None
+    liters: Optional[float] = Field(None, gt=0, le=1_000_000)
+    km: Optional[float] = Field(None, ge=0, le=100_000_000)
+    engine_hours: Optional[float] = Field(None, ge=0, le=1_000_000)
+    note: Optional[str] = Field(None, max_length=MAX_NOTE_LENGTH)
+
+    @field_validator("fuel_date")
+    @classmethod
+    def validate_fuel_date(cls, value: Optional[date]) -> Optional[date]:
+        return _ensure_not_future_fuel_date(value)
+
+    @field_validator("note")
+    @classmethod
+    def normalize_note(cls, value: Optional[str]) -> Optional[str]:
+        return _clean_optional_text(value)
+
+    @model_validator(mode="after")
+    def require_a_change(self):
+        if (
+            self.fuel_date is None
+            and self.liters is None
+            and self.km is None
+            and self.engine_hours is None
+            and self.note is None
+        ):
+            raise ValueError("Güncellenecek en az bir alan gönderilmelidir")
+        return self
 
 
 # =========================================================

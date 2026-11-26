@@ -6,18 +6,23 @@ Run from ``server/``:
 These tests do not connect to PostgreSQL.  They cover the write schema, the
 daily / weekly / monthly / previous-month period helpers, the SRU / DCU
 territory totals, the average-consumption calculation, the row-to-schema
-mapping, the dashboard diesel distribution series and the append-only table
-definition.
+mapping, the dashboard diesel distribution series and the **İşlemler →
+Düzenle** correction (payload validation, edit window and registered routes).
 """
 
 import unittest
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from pydantic import ValidationError
 
 from models.fuel_log_model import MachineFuelLogModel
 from repositories.fuel_log_repository import FuelLogRepository
+from repositories.fuel_log_window import (
+    DEFAULT_EDIT_WINDOW_DAYS,
+    MAX_EDIT_WINDOW_DAYS,
+    resolve_edit_window,
+)
 from routers import fuel_log_router
 from schemas.fuel_log_schemas import (
     FuelDistributionDaySchema,
@@ -26,6 +31,7 @@ from schemas.fuel_log_schemas import (
     FuelLogEntrySchema,
     FuelLogMachineSchema,
     FuelLogOverviewSchema,
+    FuelLogUpdateSchema,
 )
 
 
@@ -421,10 +427,98 @@ class FuelLogDistributionTests(unittest.TestCase):
         self.assertIn(("/statistics/daily", None), routes)
 
 
+class FuelLogEditWindowTests(unittest.TestCase):
+    """Date window of the **İşlemler → Düzenle** row list."""
+
+    def test_window_ends_on_the_selected_day(self):
+        today = date.today()
+
+        start, end = resolve_edit_window(today)
+
+        self.assertEqual(end, today)
+        self.assertEqual(start, today - timedelta(days=DEFAULT_EDIT_WINDOW_DAYS - 1))
+
+    def test_window_never_reaches_into_the_future(self):
+        today = date.today()
+
+        _, end = resolve_edit_window(today + timedelta(days=10))
+
+        self.assertEqual(end, today)
+
+    def test_days_are_clamped(self):
+        today = date.today()
+
+        start, end = resolve_edit_window(today, days=10_000)
+        self.assertEqual(end, today)
+        self.assertEqual(start, today - timedelta(days=MAX_EDIT_WINDOW_DAYS - 1))
+
+        start, _ = resolve_edit_window(today, days=0)
+        self.assertEqual(start, today)
+
+
+class FuelLogCorrectionTests(unittest.TestCase):
+    """``PUT /fuel-logs/update/{log_id}``: fixing a row saved on the wrong day."""
+
+    def test_single_field_correction_is_enough(self):
+        payload = FuelLogUpdateSchema(fuel_date=date(2026, 11, 24))
+
+        self.assertEqual(payload.fuel_date, date(2026, 11, 24))
+        # Omitted fields keep their stored value (None = "do not touch").
+        self.assertIsNone(payload.liters)
+        self.assertIsNone(payload.note)
+
+    def test_liters_can_be_corrected_alone(self):
+        payload = FuelLogUpdateSchema(liters=180.5)
+
+        self.assertEqual(payload.liters, 180.5)
+        self.assertIsNone(payload.fuel_date)
+
+    def test_empty_payload_is_rejected(self):
+        with self.assertRaises(ValidationError):
+            FuelLogUpdateSchema()
+
+    def test_future_date_is_rejected(self):
+        with self.assertRaises(ValidationError):
+            FuelLogUpdateSchema(fuel_date=date.today() + timedelta(days=1))
+
+    def test_today_is_accepted(self):
+        payload = FuelLogUpdateSchema(fuel_date=date.today())
+
+        self.assertEqual(payload.fuel_date, date.today())
+
+    def test_liters_must_stay_positive(self):
+        for value in (0, -1, 1_000_001):
+            with self.subTest(value=value):
+                with self.assertRaises(ValidationError):
+                    FuelLogUpdateSchema(liters=value)
+
+    def test_unknown_field_is_rejected(self):
+        with self.assertRaises(ValidationError):
+            FuelLogUpdateSchema(machine_id=3, liters=10)
+
+    def test_note_is_trimmed(self):
+        payload = FuelLogUpdateSchema(note="  düzeltildi  ")
+
+        self.assertEqual(payload.note, "düzeltildi")
+
+    def test_correction_routes_are_registered(self):
+        routes: dict[str, set] = {}
+        for route in fuel_log_router.router.routes:
+            if not hasattr(route, "methods"):
+                continue
+            routes.setdefault(route.path, set()).update(route.methods)
+
+        self.assertIn("GET", routes["/entries"])
+        self.assertIn("GET", routes["/rental/entries"])
+        self.assertIn("PUT", routes["/update/{log_id}"])
+        self.assertIn("PUT", routes["/rental/update/{log_id}"])
+
+
 class FuelLogModelTests(unittest.TestCase):
-    def test_table_is_append_only_by_contract(self):
+    def test_correction_keeps_the_row_identity(self):
         self.assertEqual(MachineFuelLogModel.__tablename__, "machine_fuel_logs")
-        # No ``updated_at`` column: a saved row is a permanent log entry.
+        # A correction rewrites the existing row: no audit / soft-delete columns
+        # are added to the ledger.
         self.assertNotIn("updated_at", MachineFuelLogModel.__table__.columns)
         self.assertNotIn("deleted_at", MachineFuelLogModel.__table__.columns)
 

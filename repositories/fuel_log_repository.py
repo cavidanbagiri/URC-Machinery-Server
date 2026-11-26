@@ -1,9 +1,12 @@
 # repositories/fuel_log_repository.py
-"""Data access for the append-only machine fuel distribution records.
+"""Data access for the machine diesel distribution records.
 
-There is deliberately no update or delete method here.  Every save inserts a
-new row; the selected day's rows are aggregated per machine for the table and
-the daily / weekly / monthly totals are computed from the same ledger.
+Every save inserts a new row; the selected day's rows are aggregated per
+machine for the table and the daily / weekly / monthly totals are computed from
+the same ledger.  A row can be **corrected** afterwards
+(:meth:`FuelLogRepository.update_log`): entering the 24th's diesel on the 25th
+is a common mistake, so the *İşlemler → Düzenle* dialog moves the row to the
+right day (and fixes the litres) instead of appending a compensating row.
 
 Besides the fuel ledger the overview joins:
 
@@ -46,13 +49,21 @@ from models.meter_log_model import MachineMeterLogModel
 from models.rental_fuel_log_model import MachineRentalFuelLogModel
 from models.user_model import UserModel
 from repositories.car_status_lookup import exclude_scrap_machines
+from repositories.fuel_log_window import (
+    DEFAULT_EDIT_WINDOW_DAYS,
+    resolve_edit_window,
+)
 from repositories.meter_log_lookup import latest_meter_log_subquery
 from repositories.rental_fuel_log_repository import RentalFuelLogRepository
-from schemas.fuel_log_schemas import FuelLogCreateSchema
+from schemas.fuel_log_schemas import FuelLogCreateSchema, FuelLogUpdateSchema
 
 #: Territory names that get a separate current-month summary card.
 SRU_TERRITORY_NAME = "SRU"
 DCU_TERRITORY_NAME = "DCU"
+
+#: Not-found details shared by the create / correct endpoints.
+MACHINE_NOT_FOUND_DETAIL = "Makine bulunamadı"
+ENTRY_NOT_FOUND_DETAIL = "Mazot kaydı bulunamadı"
 
 #: Dashboard diesel chart: rolling window and its hard limits.
 DEFAULT_DISTRIBUTION_DAYS = 7
@@ -89,6 +100,31 @@ class FuelLogRepository:
     ) -> Optional[str]:
         name = " ".join(part for part in (firstname, lastname) if part).strip()
         return name or None
+
+    @staticmethod
+    def _entry_query():
+        """Row-level ``SELECT`` of ``machine_fuel_logs`` with the author name.
+
+        Shared by the correction dialog list and by the single-row refresh
+        after an update, so both always expose the same columns.
+        """
+
+        return (
+            select(
+                MachineFuelLogModel.id,
+                MachineFuelLogModel.machine_id,
+                MachineFuelLogModel.fuel_date,
+                MachineFuelLogModel.liters,
+                MachineFuelLogModel.given_by,
+                MachineFuelLogModel.note,
+                MachineFuelLogModel.created_by_id,
+                MachineFuelLogModel.created_at,
+                UserModel.firstname.label("entered_by_firstname"),
+                UserModel.lastname.label("entered_by_lastname"),
+            )
+            .select_from(MachineFuelLogModel)
+            .outerjoin(UserModel, MachineFuelLogModel.created_by_id == UserModel.id)
+        )
 
     @staticmethod
     def _entry(row) -> dict:
@@ -534,6 +570,53 @@ class FuelLogRepository:
             "machines": machines,
         }
 
+    async def fetch_entries(
+        self,
+        machine_id: int,
+        target_date: Optional[date] = None,
+        days: int = DEFAULT_EDIT_WINDOW_DAYS,
+    ) -> list[dict]:
+        """Recent diesel rows of one machine, newest first.
+
+        Feeds the **İşlemler → Düzenle** dialog: the page lists the row the
+        user wants to correct (typically the row saved on the wrong day) and the
+        row is updated in place by :meth:`update_log`.
+        """
+
+        machine = await self.db.get(AllMachineModel, machine_id)
+        if machine is None:
+            raise HTTPException(status_code=404, detail=MACHINE_NOT_FOUND_DETAIL)
+
+        start_date, end_date = resolve_edit_window(target_date, days)
+
+        result = await self.db.execute(
+            self._entry_query()
+            .where(
+                MachineFuelLogModel.machine_id == machine_id,
+                MachineFuelLogModel.fuel_date >= start_date,
+                MachineFuelLogModel.fuel_date <= end_date,
+            )
+            .order_by(
+                MachineFuelLogModel.fuel_date.desc(),
+                MachineFuelLogModel.created_at.desc(),
+                MachineFuelLogModel.id.desc(),
+            )
+        )
+
+        return [self._entry(row) for row in result.all()]
+
+    async def fetch_entry(self, log_id: int) -> dict:
+        """One diesel row, mapped exactly like the list items."""
+
+        result = await self.db.execute(
+            self._entry_query().where(MachineFuelLogModel.id == log_id)
+        )
+        row = result.first()
+        if row is None:
+            raise HTTPException(status_code=404, detail=ENTRY_NOT_FOUND_DETAIL)
+
+        return self._entry(row)
+
     async def fetch_daily_distribution(
         self,
         days: int = DEFAULT_DISTRIBUTION_DAYS,
@@ -781,7 +864,7 @@ class FuelLogRepository:
             item["consumption_start_date"] = start_date
             item["consumption_end_date"] = end_date
 
-    # ---------- WRITE (INSERT ONLY) ----------
+    # ---------- WRITE ----------
 
     async def create_log(
         self,
@@ -791,7 +874,7 @@ class FuelLogRepository:
     ) -> MachineFuelLogModel:
         machine = await self.db.get(AllMachineModel, data.machine_id)
         if machine is None:
-            raise HTTPException(status_code=404, detail="Makine bulunamadı")
+            raise HTTPException(status_code=404, detail=MACHINE_NOT_FOUND_DETAIL)
 
         log = MachineFuelLogModel(
             machine_id=data.machine_id,
@@ -813,3 +896,42 @@ class FuelLogRepository:
             raise
 
         return log
+
+    async def update_log(self, log_id: int, data: FuelLogUpdateSchema) -> dict:
+        """Correct the date / litres / note of one saved row.
+
+        This is the *İşlemler → Düzenle* action: the row keeps its identity, so
+        the daily / weekly / monthly totals simply move with the new date.
+        Fields the payload leaves ``None`` are not touched.
+        """
+
+        log = await self.db.get(MachineFuelLogModel, log_id)
+        if log is None:
+            raise HTTPException(status_code=404, detail=ENTRY_NOT_FOUND_DETAIL)
+
+        if data.fuel_date is not None:
+            log.fuel_date = data.fuel_date
+        if data.liters is not None:
+            log.liters = float(data.liters)
+        if data.note is not None:
+            log.note = data.note
+
+        try:
+            await self.db.commit()
+        except Exception:
+            await self.db.rollback()
+            raise
+
+        return await self.fetch_entry(log_id)
+
+
+__all__ = [
+    "DCU_TERRITORY_NAME",
+    "DEFAULT_DISTRIBUTION_DAYS",
+    "ENTRY_NOT_FOUND_DETAIL",
+    "FuelLogRepository",
+    "MACHINE_NOT_FOUND_DETAIL",
+    "MAX_DISTRIBUTION_DAYS",
+    "MIN_CONSUMPTION_DELTA",
+    "SRU_TERRITORY_NAME",
+]

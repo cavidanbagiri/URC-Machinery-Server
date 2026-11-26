@@ -1,10 +1,13 @@
 # models/fuel_log_model.py
-"""Append-only diesel distribution records for every machine.
+"""Diesel distribution records for every machine.
 
 The page **Mazot Dağılımı** writes one row each time fuel is handed to a
-machine.  Existing rows are never updated or deleted: a correction is another
-row.  The selected day's rows are aggregated per machine for the entry table,
-while the daily / weekly / monthly totals on the page come from the same rows.
+machine.  A row keeps its identity and can be *corrected* afterwards (the
+*İşlemler → Düzenle* dialog): entering the 24th's diesel on the 25th is a common
+mistake, so the date and the litres of that row are fixed instead of appending a
+compensating row.  The selected day's rows are aggregated per machine for the
+entry table, while the daily / weekly / monthly totals on the page come from the
+same rows.
 """
 
 from datetime import date

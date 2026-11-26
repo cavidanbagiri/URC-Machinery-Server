@@ -10,9 +10,13 @@ three things from this module:
 * the per-rental current-month and all-time totals (row subtitles),
 * the whole rented fleet's totals for the summary cards.
 
-The ledger is append-only: there is no update or delete method.  The status of
-each rental is derived from its dates on the **selected day**, so the badge of
-the tab always matches the day whose rows are shown.
+The ledger keeps one row per refuelling; a wrong row (for example the 24th's
+diesel saved on the 25th) is corrected in place through
+:meth:`RentalFuelLogRepository.update_log`, and
+:meth:`RentalFuelLogRepository.fetch_entries` lists the recent rows for the
+**İşlemler → Düzenle** dialog.  The status of each rental is derived from its
+dates on the **selected day**, so the badge of the tab always matches the day
+whose rows are shown.
 
 A diesel row may also carry the rental's **KM / engine-hour** reading at the
 moment of refuelling (``machine_rental_fuel_logs.km`` / ``engine_hours``).
@@ -33,9 +37,19 @@ from models.rental_machine_model import (
     MachineRentalModel,
     resolve_rental_status,
 )
-from schemas.fuel_log_schemas import RentalFuelLogCreateSchema
+from models.user_model import UserModel
+from repositories.fuel_log_window import (
+    DEFAULT_EDIT_WINDOW_DAYS,
+    resolve_edit_window,
+)
+from schemas.fuel_log_schemas import (
+    RentalFuelLogCreateSchema,
+    RentalFuelLogUpdateSchema,
+)
 
 NOT_FOUND_DETAIL = "Kiralık makine kaydı bulunamadı"
+#: A diesel row of the Kiralık ledger was not found (deleted / wrong id).
+ENTITY_NOT_FOUND_DETAIL = "Kiralık makine mazot kaydı bulunamadı"
 
 #: How many recent readings per rental are inspected when looking for the
 #: newest KM and engine-hour values.  Looking at a handful of rows (instead of
@@ -76,6 +90,62 @@ class RentalFuelLogRepository:
             (MachineRentalModel.start_date > target_date, 1),
             else_=0,
         )
+
+    @staticmethod
+    def _entry_query():
+        """Row-level ``SELECT`` of the Kiralık ledger with the author name.
+
+        Shared by the correction dialog list and by the single-row refresh
+        after an update, so both always expose the same columns.
+        """
+
+        return (
+            select(
+                MachineRentalFuelLogModel.id,
+                MachineRentalFuelLogModel.rental_id,
+                MachineRentalFuelLogModel.fuel_date,
+                MachineRentalFuelLogModel.liters,
+                MachineRentalFuelLogModel.km,
+                MachineRentalFuelLogModel.engine_hours,
+                MachineRentalFuelLogModel.given_by,
+                MachineRentalFuelLogModel.note,
+                MachineRentalFuelLogModel.created_by_id,
+                MachineRentalFuelLogModel.created_at,
+                UserModel.firstname.label("entered_by_firstname"),
+                UserModel.lastname.label("entered_by_lastname"),
+            )
+            .select_from(MachineRentalFuelLogModel)
+            .outerjoin(
+                UserModel,
+                MachineRentalFuelLogModel.created_by_id == UserModel.id,
+            )
+        )
+
+    @staticmethod
+    def _entry(row) -> dict[str, Any]:
+        """Map one ledger row onto :class:`RentalFuelLogEntrySchema`."""
+
+        name = " ".join(
+            part
+            for part in (row.entered_by_firstname, row.entered_by_lastname)
+            if part
+        ).strip()
+
+        return {
+            "id": row.id,
+            "rental_id": row.rental_id,
+            "fuel_date": row.fuel_date,
+            "liters": float(row.liters),
+            "km": float(row.km) if row.km is not None else None,
+            "engine_hours": (
+                float(row.engine_hours) if row.engine_hours is not None else None
+            ),
+            "given_by": row.given_by,
+            "note": row.note,
+            "entered_by_id": row.created_by_id,
+            "entered_by_name": name or None,
+            "created_at": row.created_at,
+        }
 
     # ---------- READ ----------
 
@@ -340,7 +410,7 @@ class RentalFuelLogRepository:
             if item["last_meter_date"] is None:
                 item["last_meter_date"] = row.fuel_date
 
-    # ---------- WRITE (INSERT ONLY) ----------
+    # ---------- WRITE ----------
 
     async def create_log(
         self,
@@ -381,5 +451,98 @@ class RentalFuelLogRepository:
 
         return log
 
+    async def fetch_entries(
+        self,
+        rental_id: int,
+        target_date: Optional[date] = None,
+        days: int = DEFAULT_EDIT_WINDOW_DAYS,
+    ) -> list[dict[str, Any]]:
+        """Recent diesel rows of one rental, newest first.
 
-__all__ = ["NOT_FOUND_DETAIL", "RentalFuelLogRepository"]
+        Feeds the **İşlemler → Düzenle** dialog of the Kiralık tab; the row the
+        user wants to correct (usually a wrong day) is listed with its litres
+        and the KM / engine-hour reading captured at that moment.
+        """
+
+        rental = await self.db.get(MachineRentalModel, rental_id)
+        if rental is None:
+            raise HTTPException(status_code=404, detail=NOT_FOUND_DETAIL)
+
+        start_date, end_date = resolve_edit_window(target_date, days)
+
+        result = await self.db.execute(
+            self._entry_query()
+            .where(
+                MachineRentalFuelLogModel.rental_id == rental_id,
+                MachineRentalFuelLogModel.fuel_date >= start_date,
+                MachineRentalFuelLogModel.fuel_date <= end_date,
+            )
+            .order_by(
+                MachineRentalFuelLogModel.fuel_date.desc(),
+                MachineRentalFuelLogModel.created_at.desc(),
+                MachineRentalFuelLogModel.id.desc(),
+            )
+        )
+
+        return [self._entry(row) for row in result.all()]
+
+    async def fetch_entry(self, log_id: int) -> dict[str, Any]:
+        """One diesel row of the Kiralık ledger."""
+
+        result = await self.db.execute(
+            self._entry_query().where(MachineRentalFuelLogModel.id == log_id)
+        )
+        row = result.first()
+        if row is None:
+            raise HTTPException(
+                status_code=404,
+                detail=ENTITY_NOT_FOUND_DETAIL,
+            )
+
+        return self._entry(row)
+
+    async def update_log(
+        self,
+        log_id: int,
+        data: RentalFuelLogUpdateSchema,
+    ) -> dict[str, Any]:
+        """Correct the date / litres / counters of one saved Kiralık row.
+
+        The counter readings live on the diesel row, so moving the row to the
+        right day also moves its KM / engine-hour value.  Fields the payload
+        leaves ``None`` are not touched.
+        """
+
+        log = await self.db.get(MachineRentalFuelLogModel, log_id)
+        if log is None:
+            raise HTTPException(
+                status_code=404,
+                detail=ENTITY_NOT_FOUND_DETAIL,
+            )
+
+        if data.fuel_date is not None:
+            log.fuel_date = data.fuel_date
+        if data.liters is not None:
+            log.liters = float(data.liters)
+        if data.km is not None:
+            log.km = float(data.km)
+        if data.engine_hours is not None:
+            log.engine_hours = float(data.engine_hours)
+        if data.note is not None:
+            log.note = data.note
+
+        try:
+            await self.db.commit()
+        except Exception:
+            await self.db.rollback()
+            raise
+
+        return await self.fetch_entry(log_id)
+
+
+__all__ = [
+    "ENTITY_NOT_FOUND_DETAIL",
+    "METER_HISTORY_DEPTH",
+    "NOT_FOUND_DETAIL",
+    "RentalFuelLogRepository",
+]

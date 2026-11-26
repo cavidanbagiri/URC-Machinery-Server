@@ -1,14 +1,15 @@
 # models/rental_fuel_log_model.py
-"""Append-only diesel records for rented (kiralık) machines.
+"""Diesel records for rented (kiralık) machines.
 
 The rented equipment is rented from an outside company and is **not** part of
 ``all_machines``; the company supplies the machine but we supply the diesel, so
 the fuel has to be tracked as well.  Because a rented machine has no fleet ID,
 the ledger points at the ``machine_rentals`` agreement instead of a machine.
 
-Like :class:`models.fuel_log_model.MachineFuelLogModel` the table is
-append-only: every save inserts one row, a correction is another row, and the
-rows are aggregated per rental for the **Mazot Dağılımı → Kiralık** tab.
+Like :class:`models.fuel_log_model.MachineFuelLogModel` every save inserts one
+row, and a wrong row (e.g. the 24th's diesel saved on the 25th) is corrected in
+place through the **İşlemler → Düzenle** dialog.  The rows are aggregated per
+rental for the **Mazot Dağılımı → Kiralık** tab.
 
 Rented equipment has no row in ``machine_meter_logs`` (it is not part of
 ``all_machines``), yet the site still needs the counter reading at the moment

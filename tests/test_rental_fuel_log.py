@@ -3,15 +3,16 @@
 Run from ``server/``:
     python -m unittest tests.test_rental_fuel_log -v
 
-These tests never touch PostgreSQL.  They cover the write schema, the overview
-fields the Kiralık tab reads, the append-only table definition, the rental
-search / ordering helpers, the optional KM / engine-hour readings stored on the
-diesel row and the *rental does not exist* guard of ``create_log``.
+These tests never touch PostgreSQL.  They cover the write and correction
+schemas, the overview fields the Kiralık tab reads, the ledger table definition,
+the rental search / ordering helpers, the optional KM / engine-hour readings
+stored on the diesel row and the *rental does not exist* guard of
+``create_log``.
 """
 
 import unittest
 from collections import namedtuple
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from fastapi import HTTPException
@@ -22,6 +23,7 @@ from sqlalchemy.dialects import postgresql
 from models.rental_fuel_log_model import MachineRentalFuelLogModel
 from repositories import rental_fuel_log_repository
 from repositories.rental_fuel_log_repository import (
+    ENTITY_NOT_FOUND_DETAIL,
     NOT_FOUND_DETAIL,
     RentalFuelLogRepository,
 )
@@ -31,6 +33,7 @@ from schemas.fuel_log_schemas import (
     FuelLogRentalMachineSchema,
     RentalFuelLogCreateSchema,
     RentalFuelLogEntrySchema,
+    RentalFuelLogUpdateSchema,
 )
 
 
@@ -317,8 +320,8 @@ class RentalFuelLogModelTests(unittest.TestCase):
             "machine_rental_fuel_logs",
         )
 
-    def test_table_is_append_only_by_contract(self):
-        # Güncelleme/silme yok: her kayıt kalıcı bir satırdır.
+    def test_correction_keeps_the_row_identity(self):
+        # Düzeltme satırı yeniden yazar; ledger'a denetim/silme kolonu eklenmez.
         self.assertNotIn("updated_at", MachineRentalFuelLogModel.__table__.columns)
         self.assertNotIn("deleted_at", MachineRentalFuelLogModel.__table__.columns)
 
@@ -414,6 +417,76 @@ class RentalFuelLogRepositoryTests(unittest.TestCase):
         self.assertEqual(NOT_FOUND_DETAIL, "Kiralık makine kaydı bulunamadı")
         # Router da aynı mesajı kullanır.
         self.assertIs(rental_fuel_log_repository.NOT_FOUND_DETAIL, NOT_FOUND_DETAIL)
+
+class RentalFuelLogCorrectionTests(unittest.TestCase):
+    """``PUT /fuel-logs/rental/update/{log_id}``: Kiralık satırı düzeltmesi."""
+
+    def test_date_can_be_corrected_alone(self):
+        payload = RentalFuelLogUpdateSchema(fuel_date=date(2026, 11, 24))
+
+        self.assertEqual(payload.fuel_date, date(2026, 11, 24))
+        self.assertIsNone(payload.liters)
+        self.assertIsNone(payload.km)
+        self.assertIsNone(payload.engine_hours)
+
+    def test_meter_reading_can_be_corrected_too(self):
+        payload = RentalFuelLogUpdateSchema(km=15_500, engine_hours=0)
+
+        self.assertEqual(payload.km, 15_500)
+        # Sıfır geçerli bir okumadır; "değiştirme" anlamına gelen None'dan farklıdır.
+        self.assertEqual(payload.engine_hours, 0)
+
+    def test_empty_payload_is_rejected(self):
+        with self.assertRaises(ValidationError):
+            RentalFuelLogUpdateSchema()
+
+    def test_future_date_is_rejected(self):
+        with self.assertRaises(ValidationError):
+            RentalFuelLogUpdateSchema(
+                fuel_date=date.today() + timedelta(days=1)
+            )
+
+    def test_negative_counters_are_rejected(self):
+        with self.assertRaises(ValidationError):
+            RentalFuelLogUpdateSchema(km=-1)
+        with self.assertRaises(ValidationError):
+            RentalFuelLogUpdateSchema(engine_hours=-0.5)
+
+    def test_rental_id_cannot_be_moved(self):
+        with self.assertRaises(ValidationError):
+            RentalFuelLogUpdateSchema(rental_id=9, liters=10)
+
+    def test_entry_mapping_includes_the_counters_and_author(self):
+        row = SimpleNamespace(
+            id=12,
+            rental_id=7,
+            fuel_date=date(2026, 11, 25),
+            liters=180.75,
+            km=15_420,
+            engine_hours=None,
+            given_by="Ayşe Yılmaz",
+            note=None,
+            created_by_id=3,
+            created_at=datetime(2026, 11, 25, 9, 15, tzinfo=timezone.utc),
+            entered_by_firstname="Ayşe",
+            entered_by_lastname="Yılmaz",
+        )
+
+        entry = RentalFuelLogRepository._entry(row)
+
+        self.assertEqual(entry["id"], 12)
+        self.assertEqual(entry["liters"], 180.75)
+        self.assertEqual(entry["km"], 15_420.0)
+        self.assertIsNone(entry["engine_hours"])
+        self.assertEqual(entry["entered_by_name"], "Ayşe Yılmaz")
+        self.assertEqual(RentalFuelLogEntrySchema(**entry).rental_id, 7)
+
+    def test_unknown_diesel_row_message_is_turkish(self):
+        self.assertEqual(
+            ENTITY_NOT_FOUND_DETAIL,
+            "Kiralık makine mazot kaydı bulunamadı",
+        )
+
 
 class FakeDb:
     """Minimal stand-in for ``AsyncSession`` used by ``create_log``."""
@@ -551,6 +624,16 @@ class FuelLogRouterRentalRouteTests(unittest.TestCase):
         }
 
         self.assertIn(("/create", 201), routes)
+
+    def test_correction_routes_are_registered(self):
+        routes: dict[str, set] = {}
+        for route in fuel_log_router.router.routes:
+            if not hasattr(route, "methods"):
+                continue
+            routes.setdefault(route.path, set()).update(route.methods)
+
+        self.assertIn("GET", routes["/rental/entries"])
+        self.assertIn("PUT", routes["/rental/update/{log_id}"])
 
 
 
