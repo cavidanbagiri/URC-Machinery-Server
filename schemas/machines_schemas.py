@@ -225,9 +225,28 @@ class StatusStatItemSchema(BaseModel):
     count: int
 
 
+class TerritoryMachineStatSchema(BaseModel):
+    """Dashboard KPI: one territory (şantiye/proje) with its machine totals.
+
+    ``fleet_count`` counts our own (non-scrap) machines, ``rental_count`` the
+    rented equipment whose free-text ``site_name`` matches the territory,
+    ``count`` is their sum.
+    """
+
+    id: int
+    name: str
+    fleet_count: int
+    rental_count: int
+    count: int
+
+
 class StatusStatisticsSchema(BaseModel):
     total: int
     by_status: list[StatusStatItemSchema]
+    #: All rented machines; ``0`` keeps old clients / responses working.
+    rental_total: int = 0
+    #: Fleet + rental split per territory, newest field (defaults to no rows).
+    by_territory: list[TerritoryMachineStatSchema] = Field(default_factory=list)
 
 
 

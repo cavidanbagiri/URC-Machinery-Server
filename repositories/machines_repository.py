@@ -1,5 +1,6 @@
 # repositories/machines_repository.py
 from datetime import datetime, timezone
+from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,9 +18,11 @@ from models.machines_model import (
     CarStatusModel
 )
 from models.repair_model import RepairRecordModel, RepairTypeModel
+from models.rental_machine_model import MachineRentalModel
 from repositories.car_status_lookup import (
     exclude_scrap_machines,
     is_scrap_status_name,
+    normalize_status_name,
     resolve_repair_status,
 )
 from schemas.machines_schemas import (
@@ -33,6 +36,57 @@ from schemas.machines_schemas import (
     CreateGarageServiceSchema,
 )
 from services.storage_service import delete_objects
+
+
+# =========================================================
+# KPI YARDIMCILARI (filo + kiralık dağılımı)
+# =========================================================
+
+def territory_site_key(name: Optional[str]) -> str:
+    """Fold a territory name / rental ``site_name`` into a comparison key.
+
+    The rental site is free text, so ``"Garaj-Ambar"`` (territory) has to match
+    ``"GARAJ AMBAR"`` or ``"garaj_ambar"`` (rental). Turkish/Azerbaijani letters
+    are folded and every non-alphanumeric character is dropped.
+    """
+
+    folded = normalize_status_name(name)
+    return "".join(char for char in folded if char.isalnum())
+
+
+def summarize_territory_machines(fleet_rows, rental_rows):
+    """Per-territory machine totals from the two ``GROUP BY`` results.
+
+    ``fleet_rows`` are ``(territory_id, territory_name, fleet_count)`` triples
+    of the non-scrap fleet; ``rental_rows`` are ``(site_name, rental_count)``
+    pairs of the rented equipment.  Returns ``(by_territory, rental_total)``:
+
+    * ``by_territory`` — one dict per territory, in the order of ``fleet_rows``
+      (``fleet_count``, ``rental_count`` and their ``count``),
+    * ``rental_total`` — every rental row, including the sites that do not
+      match any territory (a renamed site must not disappear from the total).
+    """
+
+    rental_by_key = {}
+    for site_name, count in rental_rows:
+        key = territory_site_key(site_name)
+        rental_by_key[key] = rental_by_key.get(key, 0) + int(count or 0)
+
+    by_territory = []
+    for territory_id, name, fleet_count in fleet_rows:
+        fleet = int(fleet_count or 0)
+        rentals = rental_by_key.get(territory_site_key(name), 0)
+        by_territory.append(
+            {
+                "id": territory_id,
+                "name": name,
+                "fleet_count": fleet,
+                "rental_count": rentals,
+                "count": fleet + rentals,
+            }
+        )
+
+    return by_territory, sum(rental_by_key.values())
 
 
 # =========================================================
@@ -535,6 +589,10 @@ class AllMachineRepository:
 
         "Hurda" (scrapped) maşınlar sayılmır: sətirlər bazada qalır, lakin
         nə ümumi sayda, nə də status kartlarında görünür.
+
+        KPI kartları üçün eyni cavabda kiralık maşınlar da gəlir:
+        ``rental_total`` (bütün kiralık sətirləri) və ``by_territory``
+        (şantiye/proje üzrə filo + kiralık bölgüsü).
         """
         query = (
             select(
@@ -560,6 +618,40 @@ class AllMachineRepository:
         total_result = await self.db.execute(total_query)
         total = total_result.scalar() or 0
 
+        # Şantiye (territory) üzrə filo sayı — hurda maşınlar ON şərtində çıxarılır,
+        # beləliklə heç maşını olmayan şantiye də 0 ilə görünür.
+        fleet_query = (
+            select(
+                TerritoryModel.id,
+                TerritoryModel.name,
+                func.count(AllMachineModel.id).label("fleet_count"),
+            )
+            .outerjoin(
+                AllMachineModel,
+                (AllMachineModel.territory_id == TerritoryModel.id)
+                & exclude_scrap_machines(),
+            )
+            .group_by(TerritoryModel.id, TerritoryModel.name)
+            .order_by(TerritoryModel.id)
+        )
+        fleet_rows = (await self.db.execute(fleet_query)).all()
+
+        # Kiralık maşınlar ``site_name`` sərbəst mətninə görə qruplaşdırılır;
+        # şantiye adları ilə uyğunlaşdırma ``summarize_territory_machines``-də.
+        rental_query = (
+            select(
+                MachineRentalModel.site_name,
+                func.count(MachineRentalModel.id).label("rental_count"),
+            )
+            .group_by(MachineRentalModel.site_name)
+        )
+        rental_rows = (await self.db.execute(rental_query)).all()
+
+        by_territory, rental_total = summarize_territory_machines(
+            fleet_rows,
+            rental_rows,
+        )
+
         return {
             "total": total,
             "by_status": [
@@ -571,6 +663,8 @@ class AllMachineRepository:
                 }
                 for row in rows
             ],
+            "rental_total": rental_total,
+            "by_territory": by_territory,
         }
 
     async def get_type_territory_pivot(self) -> dict:
