@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from models.isg_model import (
     ISG_RESPONSIBLES,
+    ISG_SEVERITY_DEFAULT,
     ISG_STATUS_OPEN,
     MAX_DESCRIPTION_LENGTH,
     MAX_RESPONSIBLE_LENGTH,
@@ -15,6 +16,9 @@ from models.isg_model import (
 
 #: Stored state codes; a check constraint on the table enforces the same two.
 IsgStatus = Literal["acik", "kapali"]
+
+#: Importance codes; a check constraint on the table enforces the same three.
+IsgSeverity = Literal["kritik", "onemli", "az_onemli"]
 
 
 def canonical_responsible(value: str) -> str:
@@ -43,13 +47,14 @@ def canonical_responsible(value: str) -> str:
 # =========================================================
 
 class IsgNonconformityWriteSchema(BaseModel):
-    """Create / update payload — the five fields of the form."""
+    """Create / update payload — the six fields of the form."""
 
     model_config = ConfigDict(extra="forbid")
 
     record_date: date
     description: str = Field(..., min_length=1, max_length=MAX_DESCRIPTION_LENGTH)
     status: IsgStatus = ISG_STATUS_OPEN
+    severity: IsgSeverity = ISG_SEVERITY_DEFAULT
     territory_id: int = Field(..., gt=0)
     responsible_name: str = Field(
         ..., min_length=1, max_length=MAX_RESPONSIBLE_LENGTH
@@ -110,6 +115,10 @@ class IsgNonconformityItemSchema(BaseModel):
     #: ``acik`` / ``kapali``.
     status: str
     status_label: str
+
+    #: ``kritik`` / ``onemli`` / ``az_onemli`` and its Turkish label.
+    severity: str
+    severity_label: str
 
     territory_id: int
     territory_name: Optional[str] = None
@@ -172,6 +181,7 @@ __all__ = [
     "IsgNonconformityWriteSchema",
     "IsgOverviewSchema",
     "IsgResponsiblesSchema",
+    "IsgSeverity",
     "IsgStatus",
     "IsgStatusUpdateSchema",
     "PaginatedIsgSchema",

@@ -2,8 +2,8 @@
 """Data access for the ISG (occupational safety) nonconformity page.
 
 One row per nonconformity.  Paging, searching and every filter stay in SQL; the
-status label, the site name and the evidence metadata are shaped while the rows
-are mapped, so the list endpoint answers in one round trip.
+status/severity labels, the site name and the evidence metadata are shaped while
+the rows are mapped, so the list endpoint answers in one round trip.
 
 The stat cards (SRU/DCU opened + closed) are a single ``GROUP BY`` query and
 :func:`summarize_overview` — the helper is pure, which keeps the SRU/DCU rule
@@ -21,6 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from models.isg_model import (
+    ISG_SEVERITIES,
+    ISG_SEVERITY_LABELS,
     ISG_STAT_SITES,
     ISG_STATUSES,
     ISG_STATUS_CLOSED,
@@ -169,6 +171,10 @@ class IsgRepository:
             "description": record.description,
             "status": record.status,
             "status_label": ISG_STATUS_LABELS.get(record.status, record.status),
+            "severity": record.severity,
+            "severity_label": ISG_SEVERITY_LABELS.get(
+                record.severity, record.severity
+            ),
             "territory_id": record.territory_id,
             "territory_name": row.territory_name,
             "responsible_name": record.responsible_name,
@@ -192,6 +198,7 @@ class IsgRepository:
         *,
         search: Optional[str] = None,
         status: Optional[str] = None,
+        severity: Optional[str] = None,
         territory_id: Optional[int] = None,
         responsible_name: Optional[str] = None,
         date_from=None,
@@ -217,6 +224,14 @@ class IsgRepository:
                     detail="Geçersiz durum filtresi",
                 )
             filters.append(IsgNonconformityModel.status == status)
+
+        if severity:
+            if severity not in ISG_SEVERITIES:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Geçersiz önem derecesi filtresi",
+                )
+            filters.append(IsgNonconformityModel.severity == severity)
 
         if territory_id is not None:
             filters.append(IsgNonconformityModel.territory_id == territory_id)
@@ -308,6 +323,7 @@ class IsgRepository:
         offset: int = 0,
         search: Optional[str] = None,
         status: Optional[str] = None,
+        severity: Optional[str] = None,
         territory_id: Optional[int] = None,
         responsible_name: Optional[str] = None,
         date_from=None,
@@ -323,6 +339,7 @@ class IsgRepository:
         filters = self._filters(
             search=search,
             status=status,
+            severity=severity,
             territory_id=territory_id,
             responsible_name=responsible_name,
             date_from=date_from,
@@ -388,6 +405,7 @@ class IsgRepository:
             # Start open, then let _apply_status stamp closed_at/closed_by_id
             # when the form already saved the row as "Kapalı".
             status=ISG_STATUS_OPEN,
+            severity=data.severity,
             territory_id=data.territory_id,
             responsible_name=data.responsible_name,
             created_by_id=user_id,
@@ -421,6 +439,7 @@ class IsgRepository:
 
         record.record_date = data.record_date
         record.description = data.description
+        record.severity = data.severity
         record.territory_id = data.territory_id
         record.responsible_name = data.responsible_name
         self._apply_status(record, data.status, user_id)

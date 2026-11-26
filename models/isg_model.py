@@ -2,11 +2,12 @@
 """ISG (İş Sağlığı ve Güvenliği) nonconformity records and their evidence.
 
 Every row is one nonconformity opened on a site (``territories``) and owned by
-one responsible person of the ISG team.  Two states are stored:
+one responsible person of the ISG team.  Two independent attributes are stored:
 
-* ``acik``   — the nonconformity is still open,
-* ``kapali`` — it was closed; ``closed_at`` / ``closed_by_id`` remember when and
-  by whom.
+* ``status``   — ``acik`` while the nonconformity is still open, ``kapali`` once
+  it was closed; ``closed_at`` / ``closed_by_id`` remember when and by whom;
+* ``severity`` — ``kritik`` / ``onemli`` / ``az_onemli``, the importance picked
+  in the form ("Önem Derecesi").
 
 Closing a record may carry evidence files (PDF report or a photo).  The bytes
 live in PostgreSQL (``BYTEA``) because the API host has an ephemeral filesystem
@@ -49,6 +50,24 @@ ISG_STATUS_LABELS = {
     ISG_STATUS_CLOSED: "Kapalı",
 }
 
+#: Importance codes of "Önem Derecesi".  The same three codes are a check
+#: constraint on the table.  The label is exposed as ``severity_label`` so the
+#: React table never needs to duplicate the Turkish spelling.
+ISG_SEVERITY_CRITICAL = "kritik"
+ISG_SEVERITY_IMPORTANT = "onemli"
+ISG_SEVERITY_LOW = "az_onemli"
+ISG_SEVERITIES = (
+    ISG_SEVERITY_CRITICAL,
+    ISG_SEVERITY_IMPORTANT,
+    ISG_SEVERITY_LOW,
+)
+ISG_SEVERITY_DEFAULT = ISG_SEVERITY_IMPORTANT
+ISG_SEVERITY_LABELS = {
+    ISG_SEVERITY_CRITICAL: "Kritik",
+    ISG_SEVERITY_IMPORTANT: "Önemli",
+    ISG_SEVERITY_LOW: "Az Önemli",
+}
+
 #: The ISG team members offered by the "Sorumlu" dropdown.  The schema accepts
 #: them case-insensitively and stores the canonical spelling below, so the
 #: table always shows the same names.
@@ -75,6 +94,10 @@ class IsgNonconformityModel(Base):
             "status IN ('acik', 'kapali')",
             name="ck_isg_nonconformities_status",
         ),
+        CheckConstraint(
+            "severity IN ('kritik', 'onemli', 'az_onemli')",
+            name="ck_isg_nonconformities_severity",
+        ),
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -92,6 +115,17 @@ class IsgNonconformityModel(Base):
         nullable=False,
         default=ISG_STATUS_OPEN,
         server_default=ISG_STATUS_OPEN,
+        index=True,
+    )
+
+    # "Önem Derecesi": Kritik / Önemli / Az Önemli.  It is independent of the
+    # open/closed status — a closed record keeps the importance it was opened
+    # with, and an open one can be critical.
+    severity = Column(
+        String(12),
+        nullable=False,
+        default=ISG_SEVERITY_DEFAULT,
+        server_default=ISG_SEVERITY_DEFAULT,
         index=True,
     )
 
@@ -203,6 +237,12 @@ class IsgAttachmentModel(Base):
 
 __all__ = [
     "ISG_RESPONSIBLES",
+    "ISG_SEVERITIES",
+    "ISG_SEVERITY_CRITICAL",
+    "ISG_SEVERITY_DEFAULT",
+    "ISG_SEVERITY_IMPORTANT",
+    "ISG_SEVERITY_LABELS",
+    "ISG_SEVERITY_LOW",
     "ISG_STAT_SITES",
     "ISG_STATUSES",
     "ISG_STATUS_CLOSED",

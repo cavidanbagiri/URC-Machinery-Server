@@ -10,6 +10,7 @@ rule, the SQL filters and the route table.
 
 import asyncio
 import unittest
+from collections import namedtuple
 from datetime import date
 from types import SimpleNamespace
 
@@ -20,6 +21,11 @@ from sqlalchemy.dialects import postgresql
 
 from models.isg_model import (
     ISG_RESPONSIBLES,
+    ISG_SEVERITIES,
+    ISG_SEVERITY_CRITICAL,
+    ISG_SEVERITY_DEFAULT,
+    ISG_SEVERITY_LABELS,
+    ISG_SEVERITY_LOW,
     ISG_STATUSES,
     ISG_STATUS_CLOSED,
     ISG_STATUS_LABELS,
@@ -60,6 +66,7 @@ def payload(**overrides):
         "record_date": date(2026, 11, 22),
         "description": "SRU sahasında baret takılmıyor",
         "status": ISG_STATUS_OPEN,
+        "severity": ISG_SEVERITY_DEFAULT,
         "territory_id": 3,
         "responsible_name": "Ramiz Khayramov",
     }
@@ -82,6 +89,7 @@ class IsgSchemaTests(unittest.TestCase):
 
         self.assertEqual(parsed.record_date, date(2026, 11, 22))
         self.assertEqual(parsed.status, ISG_STATUS_OPEN)
+        self.assertEqual(parsed.severity, ISG_SEVERITY_DEFAULT)
         self.assertEqual(parsed.territory_id, 3)
 
     def test_description_is_trimmed(self):
@@ -109,6 +117,25 @@ class IsgSchemaTests(unittest.TestCase):
     def test_unknown_status_is_rejected(self):
         with self.assertRaises(ValidationError):
             IsgNonconformityCreateSchema(**payload(status="beklemede"))
+
+    def test_unknown_severity_is_rejected(self):
+        with self.assertRaises(ValidationError):
+            IsgNonconformityCreateSchema(**payload(severity="orta"))
+
+    def test_every_severity_code_is_accepted(self):
+        for code in ISG_SEVERITIES:
+            with self.subTest(code=code):
+                parsed = IsgNonconformityCreateSchema(**payload(severity=code))
+                self.assertEqual(parsed.severity, code)
+
+    def test_severity_is_optional_and_defaults_to_important(self):
+        data = payload()
+        data.pop("severity")
+
+        parsed = IsgNonconformityCreateSchema(**data)
+
+        self.assertEqual(parsed.severity, ISG_SEVERITY_DEFAULT)
+        self.assertEqual(ISG_SEVERITY_DEFAULT, "onemli")
 
     def test_extra_field_is_forbidden(self):
         with self.assertRaises(ValidationError):
@@ -153,6 +180,15 @@ class IsgSchemaTests(unittest.TestCase):
         self.assertEqual(ISG_STATUS_LABELS[ISG_STATUS_OPEN], "Açık")
         self.assertEqual(ISG_STATUS_LABELS[ISG_STATUS_CLOSED], "Kapalı")
 
+    def test_severity_codes_and_labels_match(self):
+        self.assertEqual(
+            set(ISG_SEVERITIES),
+            {"kritik", "onemli", "az_onemli"},
+        )
+        self.assertEqual(ISG_SEVERITY_LABELS[ISG_SEVERITY_CRITICAL], "Kritik")
+        self.assertEqual(ISG_SEVERITY_LABELS[ISG_SEVERITY_DEFAULT], "Önemli")
+        self.assertEqual(ISG_SEVERITY_LABELS[ISG_SEVERITY_LOW], "Az Önemli")
+
     def test_item_schema_defaults_are_empty(self):
         item = IsgNonconformityItemSchema(
             id=1,
@@ -160,12 +196,15 @@ class IsgSchemaTests(unittest.TestCase):
             description="Baret yok",
             status=ISG_STATUS_OPEN,
             status_label="Açık",
+            severity=ISG_SEVERITY_CRITICAL,
+            severity_label="Kritik",
             territory_id=3,
             responsible_name="Ramiz Khayramov",
         )
 
         self.assertEqual(item.attachment_count, 0)
         self.assertEqual(item.attachments, [])
+        self.assertEqual(item.severity_label, "Kritik")
 
 
 class IsgEvidenceTests(unittest.TestCase):
@@ -350,6 +389,19 @@ class IsgRepositoryFilterTests(unittest.TestCase):
 
         self.assertIn("isg_nonconformities.status = 'kapali'", sql)
 
+    def test_unknown_severity_is_rejected(self):
+        with self.assertRaises(HTTPException) as raised:
+            self.repository._filters(severity="orta")
+
+        self.assertEqual(raised.exception.status_code, 400)
+
+    def test_severity_filter_uses_the_stored_code(self):
+        sql = compile_sql(
+            self.repository._filters(severity=ISG_SEVERITY_CRITICAL)[0]
+        )
+
+        self.assertIn("isg_nonconformities.severity = 'kritik'", sql)
+
     def test_territory_filter(self):
         sql = compile_sql(self.repository._filters(territory_id=3)[0])
 
@@ -378,13 +430,14 @@ class IsgRepositoryFilterTests(unittest.TestCase):
         filters = self.repository._filters(
             search="baret",
             status=ISG_STATUS_OPEN,
+            severity=ISG_SEVERITY_CRITICAL,
             territory_id=3,
             responsible_name="Mustafa Palta",
             date_from=date(2026, 11, 1),
             date_to=date(2026, 11, 30),
         )
 
-        self.assertEqual(len(filters), 6)
+        self.assertEqual(len(filters), 7)
 
     def test_pagination_limits(self):
         self.assertEqual(DEFAULT_LIMIT, 50)
@@ -394,6 +447,41 @@ class IsgRepositoryFilterTests(unittest.TestCase):
         self.assertEqual(joined_names("Ayşe", "Yılmaz"), "Ayşe Yılmaz")
         self.assertEqual(joined_names("Ayşe", None), "Ayşe")
         self.assertIsNone(joined_names(None, None))
+
+
+class IsgMappingTests(unittest.TestCase):
+    def test_row_mapping_includes_the_severity_label(self):
+        record = SimpleNamespace(
+            id=7,
+            record_date=date(2026, 11, 22),
+            description="Baret takılmıyor",
+            status=ISG_STATUS_OPEN,
+            severity=ISG_SEVERITY_CRITICAL,
+            territory_id=3,
+            responsible_name="Ramiz Khayramov",
+            closed_at=None,
+            closed_by_id=None,
+            created_by_id=None,
+            created_at=None,
+            updated_at=None,
+        )
+        row = namedtuple(
+            "Row",
+            (
+                "record",
+                "territory_name",
+                "creator_firstname",
+                "creator_lastname",
+                "closer_firstname",
+                "closer_lastname",
+            ),
+        )(record, "SRU", None, None, None, None)
+
+        item = IsgRepository(db=None)._row_to_item(row, [])
+
+        self.assertEqual(item["severity"], ISG_SEVERITY_CRITICAL)
+        self.assertEqual(item["severity_label"], "Kritik")
+        self.assertEqual(item["status_label"], "Açık")
 
 
 class IsgModelTests(unittest.TestCase):
@@ -408,12 +496,20 @@ class IsgModelTests(unittest.TestCase):
         }
 
         self.assertIn("ck_isg_nonconformities_status", names)
+        self.assertIn("ck_isg_nonconformities_severity", names)
 
     def test_status_column_default(self):
         column = IsgNonconformityModel.__table__.c.status
 
         self.assertFalse(column.nullable)
         self.assertEqual(column.server_default.arg, ISG_STATUS_OPEN)
+
+    def test_severity_column_default(self):
+        column = IsgNonconformityModel.__table__.c.severity
+
+        self.assertFalse(column.nullable)
+        self.assertEqual(column.server_default.arg, ISG_SEVERITY_DEFAULT)
+        self.assertTrue(column.index)
 
     def test_description_column_is_text(self):
         self.assertIsInstance(

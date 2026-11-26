@@ -55,6 +55,7 @@ async def fetch_isg_items(
     offset: int = Query(0, ge=0),
     search: Optional[str] = Query(None, max_length=100),
     status: Optional[str] = Query(None, max_length=20),
+    severity: Optional[str] = Query(None, max_length=20),
     territory_id: Optional[int] = Query(None, gt=0),
     responsible_name: Optional[str] = Query(None, max_length=100),
     date_from: Optional[date] = Query(None),
@@ -68,6 +69,7 @@ async def fetch_isg_items(
             offset=offset,
             search=search,
             status=status,
+            severity=severity,
             territory_id=territory_id,
             responsible_name=responsible_name,
             date_from=date_from,
@@ -114,7 +116,7 @@ async def create_isg_item(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[UserModel, Depends(require_write_permission)],
 ):
-    """Open one nonconformity (tarih, açıklama, durum, şantiye, sorumlu)."""
+    """Open one nonconformity (tarih, açıklama, önem, durum, şantiye, sorumlu)."""
 
     try:
         return await IsgRepository(db).create(payload, current_user.id)
@@ -134,7 +136,7 @@ async def update_isg_item(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[UserModel, Depends(require_write_permission)],
 ):
-    """Replace the five editable fields of one row."""
+    """Replace the six editable fields of one row."""
 
     try:
         return await IsgRepository(db).update(item_id, payload, current_user.id)
