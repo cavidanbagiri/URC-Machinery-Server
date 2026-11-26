@@ -47,11 +47,13 @@ from repositories.isg_repository import (
     joined_names,
     summarize_overview,
     summarize_projects,
+    summarize_severities,
 )
 from routers import isg_router
 from schemas.isg_schemas import (
     IsgNonconformityCreateSchema,
     IsgNonconformityItemSchema,
+    IsgProjectSeverityItemSchema,
     IsgProjectSummarySchema,
     IsgStatusUpdateSchema,
     canonical_responsible,
@@ -441,6 +443,99 @@ class IsgProjectSummaryTests(unittest.TestCase):
         self.assertEqual(parsed.items[0].territory_name, "SRU")
         self.assertEqual(parsed.items[0].open, 2)
         self.assertEqual(parsed.items[0].closed, 1)
+        # A response without the importance breakdown stays valid.
+        self.assertEqual(parsed.severities, [])
+
+
+class IsgSeveritySummaryTests(unittest.TestCase):
+    """The Kritik / Önemli / Az Önemli lines under the dashboard table."""
+
+    def test_all_three_severities_are_always_returned_in_order(self):
+        self.assertEqual(
+            [item["severity"] for item in summarize_severities([])],
+            list(ISG_SEVERITIES),
+        )
+
+        for item in summarize_severities([]):
+            with self.subTest(severity=item["severity"]):
+                self.assertEqual(item["open"], 0)
+                self.assertEqual(item["closed"], 0)
+                self.assertEqual(item["total"], 0)
+
+    def test_counts_are_split_by_status_and_severity(self):
+        rows = [
+            (ISG_SEVERITY_CRITICAL, ISG_STATUS_OPEN, 3),
+            (ISG_SEVERITY_LOW, ISG_STATUS_OPEN, 2),
+            (ISG_SEVERITY_LOW, ISG_STATUS_CLOSED, 1),
+        ]
+
+        by_code = {
+            item["severity"]: item for item in summarize_severities(rows)
+        }
+
+        self.assertEqual(by_code[ISG_SEVERITY_CRITICAL]["open"], 3)
+        self.assertEqual(by_code[ISG_SEVERITY_CRITICAL]["closed"], 0)
+        self.assertEqual(by_code[ISG_SEVERITY_CRITICAL]["total"], 3)
+        self.assertEqual(by_code[ISG_SEVERITY_LOW]["open"], 2)
+        self.assertEqual(by_code[ISG_SEVERITY_LOW]["closed"], 1)
+        self.assertEqual(by_code[ISG_SEVERITY_LOW]["total"], 3)
+        # Nothing recorded with the default severity.
+        self.assertEqual(by_code[ISG_SEVERITY_DEFAULT]["total"], 0)
+
+    def test_labels_come_from_the_model(self):
+        labels = {
+            item["severity"]: item["severity_label"]
+            for item in summarize_severities([])
+        }
+
+        self.assertEqual(labels, ISG_SEVERITY_LABELS)
+
+    def test_unknown_severity_code_is_ignored(self):
+        severities = summarize_severities(
+            [("bilinmeyen", ISG_STATUS_OPEN, 5)]
+        )
+
+        self.assertEqual(sum(item["total"] for item in severities), 0)
+
+    def test_string_counts_are_cast_to_int(self):
+        item = summarize_severities(
+            [(ISG_SEVERITY_CRITICAL, ISG_STATUS_OPEN, "4")]
+        )[0]
+
+        self.assertEqual(item["open"], 4)
+        self.assertEqual(item["total"], 4)
+        self.assertIsInstance(item["total"], int)
+
+    def test_severity_item_matches_the_schema(self):
+        item = summarize_severities(
+            [(ISG_SEVERITY_CRITICAL, ISG_STATUS_CLOSED, 2)]
+        )[0]
+
+        parsed = IsgProjectSeverityItemSchema(**item)
+
+        self.assertEqual(parsed.severity, ISG_SEVERITY_CRITICAL)
+        self.assertEqual(parsed.severity_label, "Kritik")
+        self.assertEqual(parsed.open, 0)
+        self.assertEqual(parsed.closed, 2)
+
+    def test_summary_with_severities_matches_the_project_summary_schema(self):
+        summary = summarize_projects([(1, "SRU", ISG_STATUS_OPEN, 3)])
+        summary["severities"] = summarize_severities(
+            [
+                (ISG_SEVERITY_LOW, ISG_STATUS_OPEN, 2),
+                (ISG_SEVERITY_LOW, ISG_STATUS_CLOSED, 1),
+            ]
+        )
+
+        parsed = IsgProjectSummarySchema(**summary)
+
+        self.assertEqual(len(parsed.severities), 3)
+        low = parsed.severities[2]
+        self.assertEqual(low.severity, ISG_SEVERITY_LOW)
+        self.assertEqual(low.severity_label, "Az Önemli")
+        self.assertEqual(low.open, 2)
+        self.assertEqual(low.closed, 1)
+        self.assertEqual(low.total, 3)
 
 
 class IsgRepositoryFilterTests(unittest.TestCase):

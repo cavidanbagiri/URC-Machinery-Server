@@ -183,14 +183,34 @@ class IsgProjectSummaryItemSchema(BaseModel):
     total: int = 0
 
 
+class IsgProjectSeverityItemSchema(BaseModel):
+    """One importance line under the dashboard table (Önem Derecesi).
+
+    All three codes always come back, in Kritik → Önemli → Az Önemli order,
+    even when a severity has no records yet (``total`` 0).  ``open`` +
+    ``closed`` is always ``total``, like the project items above it.
+    """
+
+    severity: str
+    severity_label: str
+    open: int = 0
+    closed: int = 0
+    total: int = 0
+
+
 class IsgProjectSummarySchema(BaseModel):
-    """``GET /api/isg/project_summary`` — open/closed counts per project."""
+    """``GET /api/isg/project_summary`` — open/closed counts per project.
+
+    ``severities`` is the same data split by **Önem Derecesi** instead of by
+    project; the dashboard card shows it under the project table.
+    """
 
     project_count: int = 0
     total: int = 0
     open_total: int = 0
     closed_total: int = 0
     items: list[IsgProjectSummaryItemSchema] = Field(default_factory=list)
+    severities: list[IsgProjectSeverityItemSchema] = Field(default_factory=list)
 
 
 class IsgResponsiblesSchema(BaseModel):
@@ -204,6 +224,7 @@ __all__ = [
     "IsgNonconformityUpdateSchema",
     "IsgNonconformityWriteSchema",
     "IsgOverviewSchema",
+    "IsgProjectSeverityItemSchema",
     "IsgProjectSummaryItemSchema",
     "IsgProjectSummarySchema",
     "IsgResponsiblesSchema",

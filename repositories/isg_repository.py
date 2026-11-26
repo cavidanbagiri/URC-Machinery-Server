@@ -9,6 +9,11 @@ The stat cards (SRU/DCU opened + closed) are a single ``GROUP BY`` query and
 :func:`summarize_overview` — the helper is pure, which keeps the SRU/DCU rule
 (testable offline) in one place: the site name is compared trimmed and
 case-insensitively, so " sru " counts as SRU.
+
+The dashboard summary answers in one call: the per-project table comes from a
+``GROUP BY territory, status`` query, the importance breakdown under it from a
+second ``GROUP BY severity, status`` query shaped by
+:func:`summarize_severities`.
 """
 
 from datetime import datetime, timezone
@@ -137,6 +142,40 @@ def summarize_projects(rows) -> dict[str, Any]:
         "closed_total": closed_total,
         "items": items,
     }
+
+
+def summarize_severities(rows) -> list[dict[str, Any]]:
+    """Turn ``(severity, status, count)`` rows into the importance lines of the
+    dashboard card: Kritik, Önemli, Az Önemli.
+
+    All three codes of :data:`ISG_SEVERITIES` are always returned — in that
+    order, even when nothing was recorded with them — so the card never loses a
+    line and the stacked bar keeps a stable colour order.  An unknown code is
+    ignored instead of breaking the response.
+    """
+
+    counts = {
+        severity: {"open": 0, "closed": 0} for severity in ISG_SEVERITIES
+    }
+
+    for severity, status, count in rows:
+        entry = counts.get(severity)
+        if entry is None:
+            continue
+
+        amount = int(count or 0)
+        entry["closed" if status == ISG_STATUS_CLOSED else "open"] += amount
+
+    return [
+        {
+            "severity": severity,
+            "severity_label": ISG_SEVERITY_LABELS.get(severity, severity),
+            "open": counts[severity]["open"],
+            "closed": counts[severity]["closed"],
+            "total": counts[severity]["open"] + counts[severity]["closed"],
+        }
+        for severity in ISG_SEVERITIES
+    ]
 
 
 def joined_names(firstname: Optional[str], lastname: Optional[str]) -> Optional[str]:
@@ -444,7 +483,12 @@ class IsgRepository:
         return summarize_overview(result.all())
 
     async def fetch_project_summary(self) -> dict[str, Any]:
-        """Open/closed counts per project (site) — the dashboard table."""
+        """Open/closed counts per project (site) plus the importance breakdown.
+
+        Both queries read ``isg_nonconformities`` only, so one request fills
+        the whole dashboard card: the table and the Kritik/Önemli/Az Önemli
+        lines under it.
+        """
 
         result = await self.db.execute(
             select(
@@ -464,7 +508,23 @@ class IsgRepository:
                 IsgNonconformityModel.status,
             )
         )
-        return summarize_projects(result.all())
+        summary = summarize_projects(result.all())
+
+        severity_result = await self.db.execute(
+            select(
+                IsgNonconformityModel.severity,
+                IsgNonconformityModel.status,
+                func.count(IsgNonconformityModel.id),
+            )
+            .select_from(IsgNonconformityModel)
+            .group_by(
+                IsgNonconformityModel.severity,
+                IsgNonconformityModel.status,
+            )
+        )
+        summary["severities"] = summarize_severities(severity_result.all())
+
+        return summary
 
     # =========================================================
     # WRITE
@@ -620,4 +680,5 @@ __all__ = [
     "joined_names",
     "summarize_overview",
     "summarize_projects",
+    "summarize_severities",
 ]
