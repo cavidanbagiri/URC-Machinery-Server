@@ -4,7 +4,7 @@
 from datetime import date, datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 # =========================================================
@@ -18,6 +18,47 @@ class MeterLogCreateSchema(BaseModel):
     log_date: date
     km: float = Field(..., ge=0)
     engine_hours: float = Field(..., ge=0)
+
+
+def _ensure_not_future_log_date(value: Optional[date]) -> Optional[date]:
+    """A correction may move a reading to an earlier day, never to the future.
+
+    The page already refuses future dates on insert; the correction dialog has
+    to enforce the same rule on the server because the reading's day is now
+    editable (the classic mistake is entering today's counter tomorrow and
+    fixing the date afterwards).
+    """
+
+    if value is not None and value > date.today():
+        raise ValueError("Gelecek bir tarih için kayıt güncellenemez")
+    return value
+
+
+class MeterLogUpdateSchema(BaseModel):
+    """Correction of one saved KM / engine-hour reading.
+
+    Only the values the user actually changes are sent; every field is optional
+    and ``None`` means *leave it as it is*.  ``log_date`` is the important one:
+    a reading saved on the wrong day is moved to the right day instead of
+    appending a second, compensating row.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    log_date: Optional[date] = None
+    km: Optional[float] = Field(None, ge=0, le=100_000_000)
+    engine_hours: Optional[float] = Field(None, ge=0, le=1_000_000)
+
+    @field_validator("log_date")
+    @classmethod
+    def validate_log_date(cls, value: Optional[date]) -> Optional[date]:
+        return _ensure_not_future_log_date(value)
+
+    @model_validator(mode="after")
+    def require_a_change(self):
+        if self.log_date is None and self.km is None and self.engine_hours is None:
+            raise ValueError("Güncellenecek en az bir alan gönderilmelidir")
+        return self
 
 
 # =========================================================

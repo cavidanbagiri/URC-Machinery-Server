@@ -4,29 +4,32 @@ Run from ``server/``:
     python -m unittest discover -s tests -t . -v
 
 These tests do not connect to PostgreSQL.  They cover the request validation,
-the history-window helper, the row-to-schema mapping and the immutable table
-definition.
+the history-window helper, the row-to-schema mapping, the correction payload of
+the **İşlemler → Düzenle** dialog and the table definition.
 """
 
 import unittest
 from collections import namedtuple
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from pydantic import ValidationError
 from sqlalchemy.dialects import postgresql
 
 from models.meter_log_model import MachineMeterLogModel
+from repositories.fuel_log_window import DEFAULT_EDIT_WINDOW_DAYS
 from repositories.meter_log_lookup import latest_meter_log_subquery
 from repositories.meter_log_repository import (
     MAX_OVERVIEW_DAYS,
     MONTH_CHANGE_DAYS,
     MeterLogRepository,
 )
+from routers import meter_log_router
 from schemas.meter_log_schemas import (
     MeterLogCreateSchema,
     MeterLogEntrySchema,
     MeterLogMachineSchema,
+    MeterLogUpdateSchema,
 )
 from schemas.repair_schemas import RepairMachineOptionSchema
 from schemas.tire_schemas import TireMachineOptionSchema
@@ -191,9 +194,10 @@ class MeterLogWindowTests(unittest.TestCase):
 
 
 class MeterLogModelTests(unittest.TestCase):
-    def test_table_is_append_only_by_contract(self):
+    def test_correction_keeps_the_row_identity(self):
         self.assertEqual(MachineMeterLogModel.__tablename__, "machine_meter_logs")
-        # No ``updated_at`` column: a saved row is a permanent log entry.
+        # A correction rewrites the existing row: no audit / soft-delete columns
+        # are added to the reading log.
         self.assertNotIn("updated_at", MachineMeterLogModel.__table__.columns)
         self.assertNotIn("deleted_at", MachineMeterLogModel.__table__.columns)
 
@@ -214,6 +218,72 @@ class MeterLogModelTests(unittest.TestCase):
         indexes = {index.name for index in MachineMeterLogModel.__table__.indexes}
 
         self.assertIn("ix_machine_meter_logs_machine_date", indexes)
+
+
+class MeterLogCorrectionTests(unittest.TestCase):
+    """``PUT /meter-logs/update/{log_id}``: fixing a saved reading in place."""
+
+    def test_single_field_correction_is_enough(self):
+        payload = MeterLogUpdateSchema(km=12345.5)
+
+        self.assertEqual(payload.km, 12345.5)
+        # Omitted fields keep their stored value (None = "do not touch").
+        self.assertIsNone(payload.log_date)
+        self.assertIsNone(payload.engine_hours)
+
+    def test_date_can_be_corrected_alone(self):
+        payload = MeterLogUpdateSchema(log_date=date(2026, 11, 24))
+
+        self.assertEqual(payload.log_date, date(2026, 11, 24))
+        self.assertIsNone(payload.km)
+
+    def test_engine_hours_can_be_corrected_alone(self):
+        payload = MeterLogUpdateSchema(engine_hours=987.25)
+
+        self.assertEqual(payload.engine_hours, 987.25)
+
+    def test_empty_payload_is_rejected(self):
+        with self.assertRaises(ValidationError):
+            MeterLogUpdateSchema()
+
+    def test_future_date_is_rejected(self):
+        with self.assertRaises(ValidationError):
+            MeterLogUpdateSchema(log_date=date.today() + timedelta(days=1))
+
+    def test_today_is_accepted(self):
+        payload = MeterLogUpdateSchema(log_date=date.today())
+
+        self.assertEqual(payload.log_date, date.today())
+
+    def test_counters_must_stay_non_negative(self):
+        for field in ("km", "engine_hours"):
+            with self.subTest(field=field):
+                with self.assertRaises(ValidationError):
+                    MeterLogUpdateSchema(**{field: -0.01})
+
+    def test_unknown_field_is_rejected(self):
+        # The machine of a reading never changes: only its day and counters do.
+        with self.assertRaises(ValidationError):
+            MeterLogUpdateSchema(machine_id=3, km=10)
+
+    def test_correction_routes_are_registered(self):
+        routes: dict[str, set] = {}
+        for route in meter_log_router.router.routes:
+            if not hasattr(route, "methods"):
+                continue
+            routes.setdefault(route.path, set()).update(route.methods)
+
+        self.assertIn("GET", routes["/overview"])
+        self.assertIn("GET", routes["/entries"])
+        self.assertIn("POST", routes["/create"])
+        self.assertIn("PUT", routes["/update/{log_id}"])
+
+    def test_dialog_lists_the_same_window_as_the_fuel_dialogs(self):
+        default_days = (
+            MeterLogRepository.fetch_entries.__defaults__[-1]
+        )
+
+        self.assertEqual(default_days, DEFAULT_EDIT_WINDOW_DAYS)
 
 
 class MeterLogChangeHelperTests(unittest.TestCase):

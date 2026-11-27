@@ -1,11 +1,18 @@
 # repositories/meter_log_repository.py
-"""Data access for the append-only machine meter readings.
+"""Data access for the machine meter readings.
 
-There is deliberately no update or delete method here.  Every save inserts a
-new row; the latest row per machine is the current KM / engine-hour value, the
-rows inside the requested window feed the weekly matrix, and two derived
-changes (since the previous day / since a month ago) fill the **Son Gün/KM**
-and **1 Aylık Toplam** columns of the entry table.
+By default every save inserts a new row: the latest row per machine is the
+current KM / engine-hour value, the rows inside the requested window feed the
+weekly matrix, and two derived changes (since the previous day / since a month
+ago) fill the **Son Gün/KM** and **1 Aylık Toplam** columns of the entry table.
+
+A wrong row (wrong day or wrong value) is corrected **in place** with
+:meth:`MeterLogRepository.update_log` — the **İşlemler → Düzenle** dialog lists
+the recent rows of one machine with :meth:`MeterLogRepository.fetch_entries`
+and rewrites the one the user fixes.  The row keeps its identity, so the
+matrix, the "latest reading" and the change columns follow the corrected
+values without a compensating row.  There is still no delete method: history is
+never removed, only corrected.
 """
 
 from collections import defaultdict
@@ -29,13 +36,20 @@ from models.machines_model import (
 from models.meter_log_model import MachineMeterLogModel
 from models.user_model import UserModel
 from repositories.car_status_lookup import exclude_scrap_machines
+from repositories.fuel_log_window import (
+    DEFAULT_EDIT_WINDOW_DAYS,
+    resolve_edit_window,
+)
 from repositories.meter_log_lookup import latest_meter_log_subquery
-from schemas.meter_log_schemas import MeterLogCreateSchema
+from schemas.meter_log_schemas import MeterLogCreateSchema, MeterLogUpdateSchema
 
 MAX_OVERVIEW_DAYS = 31
 
 #: "1 Aylık Toplam" penceresi: yeni okumadan geriye doğru bu kadar gün.
 MONTH_CHANGE_DAYS = 30
+
+MACHINE_NOT_FOUND_DETAIL = "Makine bulunamadı"
+ENTRY_NOT_FOUND_DETAIL = "KM / motor saati kaydı bulunamadı"
 
 
 class MeterLogRepository:
@@ -79,6 +93,29 @@ class MeterLogRepository:
             ),
             "created_at": row.created_at,
         }
+
+    def _entry_query(self):
+        """One reading with the name of the user who entered it.
+
+        Shared by the 7-day matrix of the page and the **İşlemler → Düzenle**
+        dialog, so both list the same fields for the same row.
+        """
+
+        return (
+            select(
+                MachineMeterLogModel.id,
+                MachineMeterLogModel.machine_id,
+                MachineMeterLogModel.log_date,
+                MachineMeterLogModel.km,
+                MachineMeterLogModel.engine_hours,
+                MachineMeterLogModel.created_by_id,
+                MachineMeterLogModel.created_at,
+                UserModel.firstname.label("entered_by_firstname"),
+                UserModel.lastname.label("entered_by_lastname"),
+            )
+            .select_from(MachineMeterLogModel)
+            .outerjoin(UserModel, MachineMeterLogModel.created_by_id == UserModel.id)
+        )
 
     @staticmethod
     def _reading(row) -> dict:
@@ -255,19 +292,7 @@ class MeterLogRepository:
         await self._attach_changes(machines_by_id, window_end)
 
         recent_query = (
-            select(
-                MachineMeterLogModel.id,
-                MachineMeterLogModel.machine_id,
-                MachineMeterLogModel.log_date,
-                MachineMeterLogModel.km,
-                MachineMeterLogModel.engine_hours,
-                MachineMeterLogModel.created_by_id,
-                MachineMeterLogModel.created_at,
-                UserModel.firstname.label("entered_by_firstname"),
-                UserModel.lastname.label("entered_by_lastname"),
-            )
-            .select_from(MachineMeterLogModel)
-            .outerjoin(UserModel, MachineMeterLogModel.created_by_id == UserModel.id)
+            self._entry_query()
             .where(
                 MachineMeterLogModel.log_date >= start_date,
                 MachineMeterLogModel.log_date <= window_end,
@@ -444,7 +469,56 @@ class MeterLogRepository:
                 baseline["log_date"] if baseline else None
             )
 
-    # ---------- WRITE (INSERT ONLY) ----------
+    # ---------- READ: CORRECTION DIALOG ----------
+
+    async def fetch_entries(
+        self,
+        machine_id: int,
+        target_date: Optional[date] = None,
+        days: int = DEFAULT_EDIT_WINDOW_DAYS,
+    ) -> list[dict]:
+        """Recent readings of one machine, newest first.
+
+        Feeds the **İşlemler → Düzenle** dialog: the page lists the row the user
+        wants to correct (typically the reading saved on the wrong day) and the
+        row is rewritten in place by :meth:`update_log`.
+        """
+
+        machine = await self.db.get(AllMachineModel, machine_id)
+        if machine is None:
+            raise HTTPException(status_code=404, detail=MACHINE_NOT_FOUND_DETAIL)
+
+        start_date, end_date = resolve_edit_window(target_date, days)
+
+        result = await self.db.execute(
+            self._entry_query()
+            .where(
+                MachineMeterLogModel.machine_id == machine_id,
+                MachineMeterLogModel.log_date >= start_date,
+                MachineMeterLogModel.log_date <= end_date,
+            )
+            .order_by(
+                MachineMeterLogModel.log_date.desc(),
+                MachineMeterLogModel.created_at.desc(),
+                MachineMeterLogModel.id.desc(),
+            )
+        )
+
+        return [self._entry(row) for row in result.all()]
+
+    async def fetch_entry(self, log_id: int) -> dict:
+        """One reading, mapped exactly like the dialog's list items."""
+
+        result = await self.db.execute(
+            self._entry_query().where(MachineMeterLogModel.id == log_id)
+        )
+        row = result.first()
+        if row is None:
+            raise HTTPException(status_code=404, detail=ENTRY_NOT_FOUND_DETAIL)
+
+        return self._entry(row)
+
+    # ---------- WRITE (INSERT + CORRECT) ----------
 
     async def create_log(
         self,
@@ -453,7 +527,7 @@ class MeterLogRepository:
     ) -> MachineMeterLogModel:
         machine = await self.db.get(AllMachineModel, data.machine_id)
         if machine is None:
-            raise HTTPException(status_code=404, detail="Makine bulunamadı")
+            raise HTTPException(status_code=404, detail=MACHINE_NOT_FOUND_DETAIL)
 
         log = MachineMeterLogModel(
             machine_id=data.machine_id,
@@ -472,3 +546,32 @@ class MeterLogRepository:
             raise
 
         return log
+
+    async def update_log(self, log_id: int, data: MeterLogUpdateSchema) -> dict:
+        """Correct the day / KM / engine hours of one saved reading.
+
+        This is the *İşlemler → Düzenle* action: the row keeps its identity, so
+        the 7-day matrix, the "latest reading" columns and both change columns
+        move with the corrected values.  Fields the payload leaves ``None`` are
+        not touched.
+        """
+
+        log = await self.db.get(MachineMeterLogModel, log_id)
+        if log is None:
+            raise HTTPException(status_code=404, detail=ENTRY_NOT_FOUND_DETAIL)
+
+        if data.log_date is not None:
+            log.log_date = data.log_date
+        if data.km is not None:
+            log.km = float(data.km)
+        if data.engine_hours is not None:
+            log.engine_hours = float(data.engine_hours)
+
+        try:
+            await self.db.commit()
+        except Exception:
+            await self.db.rollback()
+            raise
+
+        return await self.fetch_entry(log_id)
+

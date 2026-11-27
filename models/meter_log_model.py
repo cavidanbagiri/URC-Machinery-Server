@@ -1,10 +1,14 @@
 # models/meter_log_model.py
-"""Append-only odometer / engine-hour readings for every machine.
+"""Machine odometer / engine-hour readings, one row per save.
 
-The page **Güncel KM ve Motor Saatleri** writes one row per save and never
-updates or deletes an existing row.  The newest row per machine is the current
-KM / engine-hour value; older rows stay available for the weekly matrix and for
-audit.  Corrections are therefore another row, not a destructive edit.
+The page **Güncel KM ve Motor Saatleri** appends a row for every save.  The
+newest row per machine is the current KM / engine-hour value; older rows stay
+available for the weekly matrix and for audit.
+
+A row saved on the wrong day or with a wrong counter is corrected **in place**
+(``PUT /meter-logs/update/{log_id}``, the page's *İşlemler → Düzenle* dialog).
+The table therefore has no ``updated_at`` / ``deleted_at`` columns: the log
+keeps one row per reading and nothing is versioned or removed.
 """
 
 from datetime import date

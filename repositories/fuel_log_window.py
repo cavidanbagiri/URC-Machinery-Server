@@ -1,10 +1,11 @@
 # repositories/fuel_log_window.py
-"""Shared date window of the **Kayıtları düzenle** dialog.
+"""Shared date window of the **Kayıtları düzenle** dialogs.
 
-Both diesel ledgers (``machine_fuel_logs`` and ``machine_rental_fuel_logs``)
-expose their recent rows so a wrong entry can be corrected later.  The window
-is resolved in one place, so the machine tab and the Kiralık tab always list
-the same number of days and never reach into the future.
+Three ledgers expose their recent rows so a wrong entry can be corrected later:
+``machine_fuel_logs`` and ``machine_rental_fuel_logs`` (the Mazot Dağılımı tabs)
+and ``machine_meter_logs`` (**Güncel KM ve Motor Saatleri**).  The window is
+resolved in one place, so every dialog lists the same number of days and never
+reaches into the future.
 """
 
 from datetime import date, timedelta
