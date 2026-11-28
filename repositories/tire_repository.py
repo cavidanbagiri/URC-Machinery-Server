@@ -15,6 +15,7 @@ from models.machines_model import (
     CarMarkModel,
     CarModelModel,
     CarStatusModel,
+    TypeTransportModel,
 )
 from models.tire_model import (
     MAX_TIRE_DOCUMENT_BYTES,
@@ -112,6 +113,8 @@ class TireRepository:
                 CarStatusModel.name.label("machine_status_name"),
                 CarMarkModel.name.label("car_mark_name"),
                 CarModelModel.name.label("car_model_name"),
+                #: ``Ekipman Tipi`` column of the list table (e.g. Ekskavatör).
+                TypeTransportModel.name.label("type_name"),
                 UserModel.firstname.label("creator_firstname"),
                 UserModel.lastname.label("creator_lastname"),
                 self._previous_count_column(),
@@ -121,6 +124,10 @@ class TireRepository:
             .outerjoin(CarStatusModel, AllMachineModel.status_id == CarStatusModel.id)
             .outerjoin(CarMarkModel, AllMachineModel.car_mark_id == CarMarkModel.id)
             .outerjoin(CarModelModel, AllMachineModel.car_model_id == CarModelModel.id)
+            .outerjoin(
+                TypeTransportModel,
+                AllMachineModel.type_id == TypeTransportModel.id,
+            )
             .outerjoin(UserModel, TireChangeModel.created_by_id == UserModel.id)
         )
 
@@ -140,6 +147,8 @@ class TireRepository:
             "car_mark_name": row.car_mark_name,
             "car_model_name": row.car_model_name,
             "machine_status_name": row.machine_status_name,
+            "type_id": machine.type_id,
+            "type_name": row.type_name,
             "position": change.position,
             "brand_model": change.brand_model,
             "size": change.size,

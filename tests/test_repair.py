@@ -7,6 +7,7 @@ These tests do not touch PostgreSQL. They cover the pure timing/suggestion
 helpers, backend log messages and request validation.
 """
 
+import asyncio
 import unittest
 from datetime import date, timedelta
 
@@ -24,6 +25,7 @@ from repositories.repair_repository import (
     build_created_message,
     build_garage_breakdown,
     build_quick_open_message,
+    build_top_machines,
     build_type_breakdown,
     build_updated_message,
     compute_active_ratio,
@@ -36,6 +38,8 @@ from schemas.repair_schemas import (
     RepairCloseSchema,
     RepairCreateSchema,
     RepairNoteCreateSchema,
+    RepairNoteUpdateSchema,
+    RepairSummaryMachineSchema,
     RepairSummarySchema,
     RepairSummaryTypeSchema,
     RepairUpdateSchema,
@@ -244,6 +248,7 @@ class RepairSummaryTests(unittest.TestCase):
         self.assertEqual(summary.opened_today, 0)
         self.assertEqual(summary.completed_today, 0)
         self.assertEqual(summary.by_garage_service, [])
+        self.assertEqual(summary.top_machines, [])
 
 
 class RepairMessageTests(unittest.TestCase):
@@ -792,6 +797,178 @@ class RepairDocumentTests(unittest.TestCase):
                         getattr(RepairRepository, method_name)
                     )
                 )
+
+
+class RepairTopMachinesTests(unittest.TestCase):
+    """Arşiv paneli: en çok arıza yapan 5 makine (``build_top_machines``)."""
+
+    @staticmethod
+    def _record(machine_id, label, status, duration=None, entry=None):
+        return {
+            "machine_id": machine_id,
+            "identification_no": label,
+            "plate_no": None,
+            "type_name": "Ekskavatör",
+            "car_mark_name": "CAT",
+            "car_model_name": "320D",
+            "status": status,
+            "duration_days": duration,
+            "entry_date": entry or date(2026, 1, 1),
+        }
+
+    def test_groups_by_machine_and_orders_by_total(self):
+        items = [
+            self._record(1, "M-1", "iptal"),
+            self._record(2, "M-2", "tamirde", entry=date(2026, 3, 1)),
+            self._record(2, "M-2", "tamamlandi", duration=2),
+            self._record(2, "M-2", "tamamlandi", duration=6),
+        ]
+
+        rows = build_top_machines(items)
+
+        self.assertEqual([row["machine_id"] for row in rows], [2, 1])
+        self.assertEqual(rows[0]["total"], 3)
+        self.assertEqual(rows[0]["active_count"], 1)
+        self.assertEqual(rows[0]["completed_count"], 2)
+        self.assertEqual(rows[0]["cancelled_count"], 0)
+        self.assertEqual(rows[0]["archived_count"], 2)
+        self.assertEqual(rows[0]["average_repair_days"], 4.0)
+        self.assertEqual(rows[0]["last_entry_date"], date(2026, 3, 1))
+        self.assertEqual(rows[0]["type_name"], "Ekskavatör")
+        self.assertEqual(rows[0]["car_mark_name"], "CAT")
+
+        # İptal edilen kaydın süresi ortalamaya girmez.
+        self.assertEqual(rows[1]["total"], 1)
+        self.assertEqual(rows[1]["archived_count"], 1)
+        self.assertIsNone(rows[1]["average_repair_days"])
+
+    def test_defaults_to_five_rows(self):
+        items = [
+            self._record(index, f"M-{index}", "tamamlandi", duration=1)
+            for index in range(1, 8)
+        ]
+
+        rows = build_top_machines(items)
+
+        self.assertEqual(len(rows), 5)
+        # Hepsinin toplamı 1: eşitlik etikete göre çözülür (M-1 ... M-5).
+        self.assertEqual([row["identification_no"] for row in rows], [
+            "M-1",
+            "M-2",
+            "M-3",
+            "M-4",
+            "M-5",
+        ])
+        self.assertEqual(build_top_machines(items, limit=2), rows[:2])
+        self.assertEqual(build_top_machines(items, limit=0), [])
+
+    def test_skips_records_without_a_machine(self):
+        rows = build_top_machines(
+            [{"machine_id": None, "status": "tamamlandi", "duration_days": 1}]
+        )
+
+        self.assertEqual(rows, [])
+
+    def test_machine_schema_defaults_counters(self):
+        entry = RepairSummaryMachineSchema(machine_id=7)
+
+        self.assertEqual(entry.total, 0)
+        self.assertEqual(entry.active_count, 0)
+        self.assertEqual(entry.completed_count, 0)
+        self.assertEqual(entry.cancelled_count, 0)
+        self.assertEqual(entry.archived_count, 0)
+        self.assertIsNone(entry.average_repair_days)
+        self.assertIsNone(entry.last_entry_date)
+
+    def test_summary_response_includes_top_machines(self):
+        from inspect import getsource
+
+        from repositories.repair_repository import RepairRepository
+
+        source = getsource(RepairRepository.get_summary)
+        self.assertIn('"top_machines": build_top_machines(items)', source)
+
+
+class RepairArchiveNoteTests(unittest.TestCase):
+    """Arşiv notu düzeltme: yalnızca fyildiz@ustay.com + status 2."""
+
+    @staticmethod
+    def _user(email, status_id):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(email=email, status_id=status_id)
+
+    def test_permission_constants_match_the_request(self):
+        from dependencies.permissions import (
+            ARCHIVE_NOTE_EDITOR_EMAIL,
+            ARCHIVE_NOTE_EDITOR_STATUS_ID,
+        )
+
+        self.assertEqual(ARCHIVE_NOTE_EDITOR_EMAIL, "fyildiz@ustay.com")
+        self.assertEqual(ARCHIVE_NOTE_EDITOR_STATUS_ID, 2)
+
+    def test_allowed_account_passes_the_dependency(self):
+        from dependencies.permissions import require_archive_note_permission
+
+        user = self._user("  FYildiz@Ustay.com ", 2)
+        result = asyncio.run(require_archive_note_permission(user))
+
+        self.assertIs(result, user)
+
+    def test_other_accounts_get_403(self):
+        from fastapi import HTTPException
+
+        from dependencies.permissions import require_archive_note_permission
+
+        for email, status_id in (
+            ("fyildiz@ustay.com", 1),
+            ("fyildiz@ustay.com", 3),
+            ("fyildiz@ustay.com", 4),
+            ("baska@ustay.com", 2),
+            ("", 2),
+        ):
+            with self.subTest(email=email, status_id=status_id):
+                with self.assertRaises(HTTPException) as caught:
+                    asyncio.run(
+                        require_archive_note_permission(
+                            self._user(email, status_id)
+                        )
+                    )
+                self.assertEqual(caught.exception.status_code, 403)
+
+    def test_update_schema_only_accepts_the_note(self):
+        self.assertEqual(
+            RepairNoteUpdateSchema(note="  Düzeltilmiş not  ").note,
+            "Düzeltilmiş not",
+        )
+        self.assertIsNone(RepairNoteUpdateSchema(note="   ").note)
+        self.assertIsNone(RepairNoteUpdateSchema().note)
+
+        with self.assertRaises(ValidationError):
+            RepairNoteUpdateSchema(note="x", fault_location="Motor")
+
+        with self.assertRaises(ValidationError):
+            RepairNoteUpdateSchema(note="x" * 4001)
+
+    def test_router_exposes_the_archive_note_endpoint(self):
+        from routers.repair_router import router
+
+        routes = {
+            (route.path, tuple(sorted(route.methods)))
+            for route in router.routes
+            if hasattr(route, "methods")
+        }
+        self.assertIn(("/{repair_id}/archive_note", ("PUT",)), routes)
+
+    def test_repository_rejects_open_repairs_and_logs_the_fix(self):
+        from inspect import getsource
+
+        from repositories.repair_repository import RepairRepository
+
+        source = getsource(RepairRepository.update_archive_note)
+        self.assertIn("ACTIVE_REPAIR_STATUS", source)
+        self.assertIn("Arşiv notu düzeltildi.", source)
+        self.assertIn("record.notes = data.note", source)
 
 
 if __name__ == "__main__":

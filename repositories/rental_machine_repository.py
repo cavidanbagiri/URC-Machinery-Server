@@ -6,10 +6,14 @@ from the rental dates, so no stored status can fall out of date.  Paging,
 searching, the per-column filters and the machine-type statistics stay in SQL;
 only the derived values are computed while the rows are mapped.
 
-The equipment columns (tip / marka / model) are foreign keys into the same
-lookup tables the fleet uses, and the repository joins them so every row
-carries its display names.  ``equipment_name`` — the label the diesel ledger
-shows — is rebuilt from those names on every save.
+The equipment columns (tip / marka) are foreign keys into the same lookup
+tables the fleet uses, and the repository joins them so every row carries its
+display names.  ``equipment_name`` — the label the diesel ledger shows — is
+rebuilt from those names on every save.
+
+The separate model column was dropped (the table now shows one **Marka / Model**
+column fed by the brand lookup), so the repository no longer joins
+``car_models``.
 """
 
 from datetime import date
@@ -20,11 +24,7 @@ from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.machines_model import (
-    CarMarkModel,
-    CarModelModel,
-    TypeTransportModel,
-)
+from models.machines_model import CarMarkModel, TypeTransportModel
 from models.rental_machine_model import (
     RENTAL_STATUS_EXPIRED,
     RENTAL_STATUS_LABELS,
@@ -138,7 +138,6 @@ class RentalMachineRepository:
                 MachineRentalModel,
                 TypeTransportModel.name.label("machine_type_name"),
                 CarMarkModel.name.label("car_mark_name"),
-                CarModelModel.name.label("car_model_name"),
                 UserModel.firstname.label("creator_firstname"),
                 UserModel.lastname.label("creator_lastname"),
             )
@@ -150,10 +149,6 @@ class RentalMachineRepository:
             .outerjoin(
                 CarMarkModel,
                 MachineRentalModel.car_mark_id == CarMarkModel.id,
-            )
-            .outerjoin(
-                CarModelModel,
-                MachineRentalModel.car_model_id == CarModelModel.id,
             )
             .outerjoin(
                 UserModel,
@@ -187,8 +182,6 @@ class RentalMachineRepository:
             "machine_type_name": row.machine_type_name,
             "car_mark_id": rental.car_mark_id,
             "car_mark_name": row.car_mark_name,
-            "car_model_id": rental.car_model_id,
-            "car_model_name": row.car_model_name,
             "plate_no": rental.plate_no,
             "company_name": rental.company_name,
             "site_name": rental.site_name,
@@ -211,7 +204,6 @@ class RentalMachineRepository:
         status: Optional[str] = None,
         machine_type_id: Optional[int] = None,
         car_mark_id: Optional[int] = None,
-        car_model_id: Optional[int] = None,
         plate: Optional[str] = None,
         company: Optional[str] = None,
         site: Optional[str] = None,
@@ -223,8 +215,8 @@ class RentalMachineRepository:
     ) -> list:
         filters: list = []
 
-        # Search box: covers the stored label (tip + marka + model + plaka on
-        # new rows) and the free-text columns, so old rows stay findable.
+        # Search box: covers the stored label (tip + marka + plaka on new rows)
+        # and the free-text columns, so old rows stay findable.
         term = (search or "").strip()
         if term:
             pattern = f"%{term}%"
@@ -250,8 +242,6 @@ class RentalMachineRepository:
             filters.append(MachineRentalModel.machine_type_id == machine_type_id)
         if car_mark_id:
             filters.append(MachineRentalModel.car_mark_id == car_mark_id)
-        if car_model_id:
-            filters.append(MachineRentalModel.car_model_id == car_model_id)
 
         if start_from:
             filters.append(MachineRentalModel.start_date >= start_from)
@@ -320,7 +310,6 @@ class RentalMachineRepository:
         status: Optional[str] = None,
         machine_type_id: Optional[int] = None,
         car_mark_id: Optional[int] = None,
-        car_model_id: Optional[int] = None,
         plate: Optional[str] = None,
         company: Optional[str] = None,
         site: Optional[str] = None,
@@ -344,7 +333,6 @@ class RentalMachineRepository:
             "status": status,
             "machine_type_id": machine_type_id,
             "car_mark_id": car_mark_id,
-            "car_model_id": car_model_id,
             "plate": plate,
             "company": company,
             "site": site,
@@ -405,7 +393,7 @@ class RentalMachineRepository:
         self,
         data: RentalMachineWriteSchema,
     ) -> str:
-        """One-line ``equipment_name`` rebuilt from tip / marka / model / plaka."""
+        """One-line ``equipment_name`` rebuilt from tip / marka / plaka."""
 
         return compose_equipment_name(
             type_name=await self._lookup_name(
@@ -413,9 +401,6 @@ class RentalMachineRepository:
             ),
             mark_name=await self._lookup_name(
                 CarMarkModel, data.car_mark_id, "Marka"
-            ),
-            model_name=await self._lookup_name(
-                CarModelModel, data.car_model_id, "Model"
             ),
             plate_no=data.plate_no,
             # Old clients still send the free-text name; it is kept as-is.
@@ -431,7 +416,6 @@ class RentalMachineRepository:
             equipment_name=await self._equipment_label(data),
             machine_type_id=data.machine_type_id,
             car_mark_id=data.car_mark_id,
-            car_model_id=data.car_model_id,
             plate_no=data.plate_no,
             company_name=data.company_name,
             site_name=data.site_name,
@@ -465,11 +449,10 @@ class RentalMachineRepository:
             raise HTTPException(status_code=404, detail=NOT_FOUND_DETAIL)
 
         # Rebuild the one-line label so the diesel ledger never shows a stale
-        # equipment description after tip / marka / model / plaka is edited.
+        # equipment description after tip / marka / plaka is edited.
         rental.equipment_name = await self._equipment_label(data)
         rental.machine_type_id = data.machine_type_id
         rental.car_mark_id = data.car_mark_id
-        rental.car_model_id = data.car_model_id
         rental.plate_no = data.plate_no
         rental.company_name = data.company_name
         rental.site_name = data.site_name

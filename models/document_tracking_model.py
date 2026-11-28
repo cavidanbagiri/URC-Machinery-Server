@@ -16,6 +16,7 @@ from db.base import Base
 #: Pydantic schema and the frontend form.
 DOCUMENT_DATE_FIELDS = (
     "compulsory_traffic_insurance_date",
+    "kasko_date",
     "inspection_end_date",
     "passenger_transport_license_date",
     "partial_technical_inspection_date",
@@ -41,6 +42,8 @@ class MachineDocumentTrackingModel(Base):
 
     # Zorunlu Trafik
     compulsory_traffic_insurance_date = Column(Date, nullable=True)
+    # Kasko
+    kasko_date = Column(Date, nullable=True)
     # Muayene (Bitiş Tarihi)
     inspection_end_date = Column(Date, nullable=True)
     # Yolcu Taşıma Lisansı

@@ -15,7 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.setup import get_db
 from dependencies.auth import get_current_user
-from dependencies.permissions import require_write_permission
+from dependencies.permissions import (
+    require_archive_note_permission,
+    require_write_permission,
+)
 from models.repair_model import MAX_REPAIR_DOCUMENT_BYTES
 from models.user_model import UserModel
 from repositories.pdf_documents import content_disposition
@@ -29,6 +32,7 @@ from schemas.repair_schemas import (
     RepairFetchItemSchema,
     RepairMachineOptionSchema,
     RepairNoteCreateSchema,
+    RepairNoteUpdateSchema,
     RepairReopenSchema,
     RepairStatusCode,
     RepairSummarySchema,
@@ -312,6 +316,32 @@ async def add_repair_note(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Not eklenemedi: {e}")
+
+
+@router.put("/{repair_id}/archive_note", response_model=RepairFetchItemSchema)
+async def update_archive_note(
+    repair_id: int,
+    data: RepairNoteUpdateSchema,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[
+        UserModel, Depends(require_archive_note_permission)
+    ],
+):
+    """Arşivde yanlış girilmiş notu düzeltir.
+
+    Yalnızca ``fyildiz@ustay.com`` (Manager / status 2) hesabı yetkilidir;
+    aktif tamir kayıtları reddedilir. Boş ``note`` notu temizler.
+    """
+    try:
+        return await RepairRepository(db).update_archive_note(
+            repair_id, data, current_user.id
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Arşiv notu güncellenemedi: {e}"
+        )
 
 
 # =========================================================

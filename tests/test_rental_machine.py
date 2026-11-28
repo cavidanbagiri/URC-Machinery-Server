@@ -55,7 +55,6 @@ ROW = namedtuple(
         "rental",
         "machine_type_name",
         "car_mark_name",
-        "car_model_name",
         "creator_firstname",
         "creator_lastname",
     ],
@@ -66,7 +65,6 @@ def payload(**overrides):
     data = {
         "machine_type_id": 4,
         "car_mark_id": 2,
-        "car_model_id": 9,
         "plate_no": "34 ABC 123",
         "company_name": "Ustay Kiralama A.Ş.",
         "site_name": "Merkez Şantiye",
@@ -80,10 +78,9 @@ def payload(**overrides):
 def rental(**overrides):
     data = {
         "id": 7,
-        "equipment_name": "Ekskavatör · CAT · 320D · 34 ABC 123",
+        "equipment_name": "Ekskavatör · CAT · 34 ABC 123",
         "machine_type_id": 4,
         "car_mark_id": 2,
-        "car_model_id": 9,
         "plate_no": "34 ABC 123",
         "company_name": "Ustay Kiralama A.Ş.",
         "site_name": "Merkez Şantiye",
@@ -105,7 +102,6 @@ def row(rental_row=None, firstname=None, lastname=None, **names):
         rental_row,
         names.get("machine_type_name", "Ekskavatör"),
         names.get("car_mark_name", "CAT"),
-        names.get("car_model_name", "320D"),
         firstname,
         lastname,
     )
@@ -126,10 +122,17 @@ class RentalMachineSchemaTests(unittest.TestCase):
 
         self.assertEqual(parsed.machine_type_id, 4)
         self.assertEqual(parsed.car_mark_id, 2)
-        self.assertEqual(parsed.car_model_id, 9)
         self.assertEqual(parsed.plate_no, "34 ABC 123")
         self.assertEqual(parsed.start_date, date(2026, 11, 1))
         self.assertEqual(parsed.end_date, date(2026, 12, 31))
+
+    def test_model_is_no_longer_a_payload_field(self):
+        # The rental table shows a single Marka / Model column fed by the brand,
+        # so the model link was dropped from the table and the API contract.
+        self.assertNotIn("car_model_id", RentalMachineCreateSchema.model_fields)
+
+        with self.assertRaises(ValidationError):
+            RentalMachineCreateSchema(**payload(car_model_id=9))
 
     def test_names_collapse_repeated_whitespace(self):
         parsed = RentalMachineCreateSchema(
@@ -146,7 +149,7 @@ class RentalMachineSchemaTests(unittest.TestCase):
 
     def test_legacy_equipment_name_only_payload_is_accepted(self):
         data = payload()
-        for field in ("machine_type_id", "car_mark_id", "car_model_id", "plate_no"):
+        for field in ("machine_type_id", "car_mark_id", "plate_no"):
             data.pop(field)
         data["equipment_name"] = "  CAT   320D   Ekskavatör "
 
@@ -171,7 +174,7 @@ class RentalMachineSchemaTests(unittest.TestCase):
 
     def test_empty_equipment_is_rejected(self):
         data = payload()
-        for field in ("machine_type_id", "car_mark_id", "car_model_id", "plate_no"):
+        for field in ("machine_type_id", "car_mark_id", "plate_no"):
             data.pop(field)
 
         with self.assertRaises(ValidationError):
@@ -179,7 +182,7 @@ class RentalMachineSchemaTests(unittest.TestCase):
 
     def test_plate_only_whitespace_means_no_plate(self):
         data = payload()
-        for field in ("machine_type_id", "car_mark_id", "car_model_id"):
+        for field in ("machine_type_id", "car_mark_id"):
             data.pop(field)
 
         parsed = RentalMachineCreateSchema(**payload(plate_no="   "))
@@ -255,10 +258,9 @@ class RentalMachineSchemaTests(unittest.TestCase):
         item = RentalMachineItemSchema(
             id=7,
             **payload(),
-            equipment_name="Ekskavatör · CAT · 320D · 34 ABC 123",
+            equipment_name="Ekskavatör · CAT · 34 ABC 123",
             machine_type_name="Ekskavatör",
             car_mark_name="CAT",
-            car_model_name="320D",
             status=RENTAL_STATUS_ACTIVE,
             status_label="Aktif",
             days_remaining=10,
@@ -268,8 +270,10 @@ class RentalMachineSchemaTests(unittest.TestCase):
         self.assertEqual(item.status, "aktif")
         self.assertEqual(item.duration_days, 61)
         self.assertEqual(item.machine_type_name, "Ekskavatör")
+        self.assertEqual(item.car_mark_name, "CAT")
         self.assertEqual(item.plate_no, "34 ABC 123")
         self.assertIsNone(item.created_by_name)
+        self.assertNotIn("car_model_name", RentalMachineItemSchema.model_fields)
 
     def test_type_stat_schema_accepts_both_known_and_unknown_types(self):
         known = RentalMachineTypeStatSchema(
@@ -378,11 +382,15 @@ class EquipmentLabelTests(unittest.TestCase):
             compose_equipment_name(
                 type_name="Ekskavatör",
                 mark_name="CAT",
-                model_name="320D",
                 plate_no="34 ABC 123",
             ),
-            "Ekskavatör · CAT · 320D · 34 ABC 123",
+            "Ekskavatör · CAT · 34 ABC 123",
         )
+
+    def test_model_is_not_part_of_the_label(self):
+        # The model column was dropped, so the helper no longer takes a model.
+        with self.assertRaises(TypeError):
+            compose_equipment_name(model_name="320D")
 
     def test_empty_parts_are_skipped(self):
         self.assertEqual(
@@ -432,17 +440,18 @@ class RentalMachineModelTests(unittest.TestCase):
         for field in (
             "machine_type_id",
             "car_mark_id",
-            "car_model_id",
             "plate_no",
         ):
             with self.subTest(field=field):
                 self.assertTrue(columns[field].nullable)
 
+    def test_model_column_was_dropped(self):
+        self.assertNotIn("car_model_id", MachineRentalModel.__table__.columns)
+
     def test_equipment_lookups_use_set_null(self):
         expectations = {
             "machine_type_id": "type_transports",
             "car_mark_id": "car_marks",
-            "car_model_id": "car_models",
         }
 
         for column, table in expectations.items():
@@ -498,8 +507,8 @@ class RentalMachineRepositoryTests(unittest.TestCase):
         self.assertEqual(item["machine_type_id"], 4)
         self.assertEqual(item["machine_type_name"], "Ekskavatör")
         self.assertEqual(item["car_mark_name"], "CAT")
-        self.assertEqual(item["car_model_name"], "320D")
         self.assertEqual(item["plate_no"], "34 ABC 123")
+        self.assertNotIn("car_model_name", item)
 
     def test_row_mapping_for_a_planned_rental(self):
         item = self.repository._row_to_item(
@@ -543,7 +552,6 @@ class RentalMachineRepositoryTests(unittest.TestCase):
                 rental(
                     machine_type_id=None,
                     car_mark_id=None,
-                    car_model_id=None,
                     plate_no=None,
                     equipment_name="CAT 320D Ekskavatör",
                 ),
@@ -551,7 +559,6 @@ class RentalMachineRepositoryTests(unittest.TestCase):
                 None,
                 machine_type_name=None,
                 car_mark_name=None,
-                car_model_name=None,
             ),
             today=date(2026, 11, 22),
         )
@@ -627,13 +634,15 @@ class RentalMachineRepositoryTests(unittest.TestCase):
         filters = self.repository._filters(
             machine_type_id=4,
             car_mark_id=2,
-            car_model_id=9,
         )
 
-        self.assertEqual(3, len(filters))
+        self.assertEqual(2, len(filters))
         self.assertIn("machine_type_id = 4", compile_sql(filters[0]))
         self.assertIn("car_mark_id = 2", compile_sql(filters[1]))
-        self.assertIn("car_model_id = 9", compile_sql(filters[2]))
+
+    def test_model_is_not_a_filter_anymore(self):
+        with self.assertRaises(TypeError):
+            self.repository._filters(car_model_id=9)
 
     def test_date_range_filters_are_inclusive(self):
         filters = self.repository._filters(
@@ -686,7 +695,6 @@ class RentalMachineRouterTests(unittest.TestCase):
         for name in (
             "machine_type_id",
             "car_mark_id",
-            "car_model_id",
             "plate",
             "company",
             "site",
@@ -697,6 +705,9 @@ class RentalMachineRouterTests(unittest.TestCase):
         ):
             with self.subTest(parameter=name):
                 self.assertIn(name, parameters)
+
+        # The merged Marka / Model column only needs the brand filter.
+        self.assertNotIn("car_model_id", parameters)
 
     def test_create_returns_201_and_delete_204(self):
         statuses = {

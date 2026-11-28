@@ -62,10 +62,27 @@ class DocumentTrackingSchemaTests(unittest.TestCase):
     def test_model_has_exactly_the_documented_date_columns(self):
         columns = MachineDocumentTrackingModel.__table__.columns
 
-        self.assertEqual(len(DOCUMENT_DATE_FIELDS), 8)
+        self.assertEqual(len(DOCUMENT_DATE_FIELDS), 9)
         for field in DOCUMENT_DATE_FIELDS:
             self.assertIn(field, columns)
             self.assertIsInstance(columns[field].type, Date)
+
+    def test_kasko_date_is_a_nullable_date_column(self):
+        column = MachineDocumentTrackingModel.__table__.columns["kasko_date"]
+
+        self.assertIsInstance(column.type, Date)
+        self.assertTrue(column.nullable)
+        self.assertIsNone(DocumentTrackingUpdateSchema().kasko_date)
+        self.assertEqual(
+            DocumentTrackingUpdateSchema(kasko_date="2027-05-20").kasko_date,
+            date(2027, 5, 20),
+        )
+
+    def test_kasko_follows_the_traffic_insurance_column(self):
+        fields = list(DOCUMENT_DATE_FIELDS)
+        position = fields.index("compulsory_traffic_insurance_date")
+
+        self.assertEqual(fields[position + 1], "kasko_date")
 
     def test_item_schema_keeps_machine_and_lookup_labels(self):
         item = DocumentTrackingItemSchema(

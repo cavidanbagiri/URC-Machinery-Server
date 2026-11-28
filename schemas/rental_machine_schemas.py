@@ -17,7 +17,9 @@ NAME_FIELDS = ("equipment_name", "company_name", "site_name")
 
 #: Structured equipment columns; at least one of them (or the legacy free-text
 #: ``equipment_name``) must be filled so a row is never completely anonymous.
-EQUIPMENT_ID_FIELDS = ("machine_type_id", "car_mark_id", "car_model_id")
+#: The model is not one of them any more — the table shows a single
+#: Marka / Model column, so ``car_model_id`` was dropped from the table.
+EQUIPMENT_ID_FIELDS = ("machine_type_id", "car_mark_id")
 
 
 def normalize_name(value: str) -> str:
@@ -34,8 +36,8 @@ class RentalMachineWriteSchema(BaseModel):
     """Create / update payload.
 
     The equipment is described with ``machine_type_id`` / ``car_mark_id`` /
-    ``car_model_id`` / ``plate_no``.  ``equipment_name`` stays accepted for old
-    clients: the repository then uses it verbatim as the one-line label.
+    ``plate_no``.  ``equipment_name`` stays accepted for old clients: the
+    repository then uses it verbatim as the one-line label.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -43,7 +45,6 @@ class RentalMachineWriteSchema(BaseModel):
     # ---------- structured equipment ----------
     machine_type_id: Optional[int] = Field(None, ge=1)
     car_mark_id: Optional[int] = Field(None, ge=1)
-    car_model_id: Optional[int] = Field(None, ge=1)
     plate_no: Optional[str] = Field(None, max_length=MAX_PLATE_LENGTH)
 
     #: Legacy free-text equipment label (optional).
@@ -83,7 +84,7 @@ class RentalMachineWriteSchema(BaseModel):
             self.plate_no or self.equipment_name
         ):
             raise ValueError(
-                "Ekipman bilgisi girin (makine tipi, marka, model veya plaka)"
+                "Ekipman bilgisi girin (makine tipi, marka veya plaka)"
             )
         return self
 
@@ -115,10 +116,9 @@ class RentalMachineItemSchema(BaseModel):
     equipment_name: str
     machine_type_id: Optional[int] = None
     machine_type_name: Optional[str] = None
+    #: Marka — feeds the merged **Marka / Model** column of the table.
     car_mark_id: Optional[int] = None
     car_mark_name: Optional[str] = None
-    car_model_id: Optional[int] = None
-    car_model_name: Optional[str] = None
     plate_no: Optional[str] = None
 
     company_name: str

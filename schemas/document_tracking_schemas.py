@@ -13,6 +13,7 @@ class DocumentTrackingUpdateSchema(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     compulsory_traffic_insurance_date: Optional[date] = None
+    kasko_date: Optional[date] = None
     inspection_end_date: Optional[date] = None
     passenger_transport_license_date: Optional[date] = None
     partial_technical_inspection_date: Optional[date] = None
@@ -40,6 +41,7 @@ class DocumentTrackingItemSchema(BaseModel):
     car_model_name: Optional[str] = None
 
     compulsory_traffic_insurance_date: Optional[date] = None
+    kasko_date: Optional[date] = None
     inspection_end_date: Optional[date] = None
     passenger_transport_license_date: Optional[date] = None
     partial_technical_inspection_date: Optional[date] = None

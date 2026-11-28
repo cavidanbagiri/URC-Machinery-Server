@@ -42,7 +42,6 @@ async def fetch_rental_machines(
     # Excel-style column filters of the table header.
     machine_type_id: Optional[int] = Query(None, ge=1),
     car_mark_id: Optional[int] = Query(None, ge=1),
-    car_model_id: Optional[int] = Query(None, ge=1),
     plate: Optional[str] = Query(None, max_length=MAX_PLATE_LENGTH),
     company: Optional[str] = Query(None, max_length=100),
     site: Optional[str] = Query(None, max_length=100),
@@ -65,7 +64,6 @@ async def fetch_rental_machines(
             status=status,
             machine_type_id=machine_type_id,
             car_mark_id=car_mark_id,
-            car_model_id=car_model_id,
             plate=plate,
             company=company,
             site=site,

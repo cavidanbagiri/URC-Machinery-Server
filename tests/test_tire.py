@@ -23,6 +23,7 @@ from repositories.tire_repository import (
 )
 from schemas.tire_schemas import (
     TireChangeCreateSchema,
+    TireChangeItemSchema,
     TireChangeUpdateSchema,
     TirePositionCreateSchema,
     TireSummarySchema,
@@ -165,6 +166,32 @@ class TireChangeUpdateSchemaTests(unittest.TestCase):
     def test_unknown_fields_are_rejected(self):
         with self.assertRaises(ValidationError):
             TireChangeUpdateSchema(created_by_id=1)
+
+
+class TireChangeItemSchemaTests(unittest.TestCase):
+    """List payload: the table shows the machine's equipment type."""
+
+    def item_payload(self, **overrides):
+        data = {
+            "id": 11,
+            "machine_id": 7,
+            "position": "Sol Ön",
+            "change_date": date.today(),
+        }
+        data.update(overrides)
+        return data
+
+    def test_equipment_type_is_optional(self):
+        parsed = TireChangeItemSchema(**self.item_payload())
+        self.assertIsNone(parsed.type_id)
+        self.assertIsNone(parsed.type_name)
+
+    def test_equipment_type_is_accepted(self):
+        parsed = TireChangeItemSchema(
+            **self.item_payload(type_id=4, type_name="Ekskavatör")
+        )
+        self.assertEqual(parsed.type_id, 4)
+        self.assertEqual(parsed.type_name, "Ekskavatör")
 
 
 class TireSummarySchemaTests(unittest.TestCase):

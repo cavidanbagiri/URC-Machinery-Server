@@ -128,6 +128,24 @@ class RepairNoteCreateSchema(BaseModel):
         return value
 
 
+class RepairNoteUpdateSchema(BaseModel):
+    """Arşivdeki yanlış notu düzeltmek için kullanılır.
+
+    Yalnızca ``note`` alanı kabul edilir (``extra="forbid"``), böylece bu uç
+    nokta üzerinden tamir kaydının başka bir alanı değiştirilemez. Boş metin
+    notu temizler: yanlış yazılmış bir not tamamen kaldırılabilir.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    note: Optional[str] = Field(None, max_length=4000)
+
+    @field_validator("note")
+    @classmethod
+    def normalize_note(cls, value: Optional[str]) -> Optional[str]:
+        return _clean_optional_text(value)
+
+
 # =========================================================
 # READ
 # =========================================================
@@ -252,6 +270,30 @@ class RepairSummaryGarageSchema(BaseModel):
     active_count: int
 
 
+class RepairSummaryMachineSchema(BaseModel):
+    """Arşiv panelindeki "en çok arıza yapan makineler" satırı.
+
+    ``total`` bütün tamir kayıtlarını (açık + kapanmış) sayar; ``active_count``,
+    ``completed_count`` ve ``cancelled_count`` bu toplamın dağılımıdır.
+    ``average_repair_days`` yalnızca tamamlanan kayıtların ortalamasıdır.
+    """
+
+    machine_id: int
+    identification_no: Optional[str] = None
+    plate_no: Optional[str] = None
+    type_name: Optional[str] = None
+    car_mark_name: Optional[str] = None
+    car_model_name: Optional[str] = None
+
+    total: int = 0
+    active_count: int = 0
+    completed_count: int = 0
+    cancelled_count: int = 0
+    archived_count: int = 0
+    average_repair_days: Optional[float] = None
+    last_entry_date: Optional[date] = None
+
+
 class RepairSummarySchema(BaseModel):
     total: int
     active: int
@@ -270,6 +312,8 @@ class RepairSummarySchema(BaseModel):
     by_status: list[RepairSummaryStatusSchema]
     by_type: list[RepairSummaryTypeSchema]
     by_garage_service: list[RepairSummaryGarageSchema] = Field(default_factory=list)
+    # Arşiv sekmesindeki "En Çok Arıza Yapan 5 Makine" paneli.
+    top_machines: list[RepairSummaryMachineSchema] = Field(default_factory=list)
 
 
 class RepairMachineOptionSchema(BaseModel):

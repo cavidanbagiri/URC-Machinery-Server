@@ -5,9 +5,14 @@ One row is one rental: which equipment was rented, from which company, at
 which site and between which dates.  The rented equipment is *not* part of
 ``all_machines`` (it is not our fleet), so it is described with the same
 vocabulary as the fleet — makine tipi (``type_transports``), marka
-(``car_marks``), model (``car_models``) and a free-text ``plate_no`` — plus the
-free-text company and site.  The row never affects maintenance, repair or
-machine status.
+(``car_marks``) and a free-text ``plate_no`` — plus the free-text company and
+site.  The row never affects maintenance, repair or machine status.
+
+The rental table carries one **Marka / Model** column (management decision), so
+the model is not stored separately: the ``car_model_id`` column was dropped and
+the brand lookup feeds the merged column.  Model text saved before that change
+survives inside the stored ``equipment_name`` label, because that label is
+never rewritten unless the row is edited.
 
 ``equipment_name`` is still stored: it is the one-line label the diesel ledger
 (``machine_rental_fuel_logs``) shows and searches.  The repository rebuilds it
@@ -72,16 +77,18 @@ def compose_equipment_name(
     *,
     type_name: Optional[str] = None,
     mark_name: Optional[str] = None,
-    model_name: Optional[str] = None,
     plate_no: Optional[str] = None,
     fallback: Optional[str] = None,
 ) -> str:
     """Build the one-line equipment label from the structured fields.
 
-    ``"Ekskavatör · CAT · 320D · 34 ABC 123"`` — empty parts are skipped, so a
-    rental that only has a type reads just ``"Ekskavatör"``.  When no structured
-    field is set, ``fallback`` (the legacy free-text name) is returned instead;
-    this keeps old rows and old API clients working.
+    ``"Ekskavatör · CAT · 34 ABC 123"`` — empty parts are skipped, so a rental
+    that only has a type reads just ``"Ekskavatör"``.  When no structured field
+    is set, ``fallback`` (the legacy free-text name) is returned instead; this
+    keeps old rows and old API clients working.
+
+    The model is intentionally absent: it is no longer a stored column (the
+    table shows a single Marka / Model column fed by the brand lookup).
     """
 
     parts = [
@@ -89,7 +96,6 @@ def compose_equipment_name(
         for part in (
             clean_label_part(type_name),
             clean_label_part(mark_name),
-            clean_label_part(model_name),
             clean_label_part(plate_no),
         )
         if part
@@ -151,13 +157,6 @@ class MachineRentalModel(Base):
     car_mark_id = Column(
         Integer,
         ForeignKey("car_marks.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
-    #: Model — ``car_models`` lookup.
-    car_model_id = Column(
-        Integer,
-        ForeignKey("car_models.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )

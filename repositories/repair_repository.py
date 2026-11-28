@@ -38,6 +38,7 @@ from schemas.repair_schemas import (
     RepairCloseSchema,
     RepairCreateSchema,
     RepairNoteCreateSchema,
+    RepairNoteUpdateSchema,
     RepairReopenSchema,
     RepairUpdateSchema,
 )
@@ -236,6 +237,93 @@ def build_type_breakdown(
             }
         )
     return breakdown
+
+
+def build_top_machines(
+    items: list[dict[str, Any]], limit: int = 5
+) -> list[dict[str, Any]]:
+    """Arşiv paneli: en çok arıza yapan ``limit`` makine.
+
+    Her tamir kaydı (açık + kapanmış) makinesine göre gruplanır. ``total``
+    bütün kayıtları sayar; ``active_count`` / ``completed_count`` /
+    ``cancelled_count`` bu toplamın dağılımıdır ve ``archived_count`` ilk
+    ikisinin toplamıdır. ``average_repair_days`` yalnızca tamamlanan
+    kayıtların sürelerinden hesaplanır (iptallerde süre yoktur). Eşit sayıda
+    arızası olan makineler etikete göre sıralanır, böylece panel istekler
+    arasında yer değiştirmez.
+    """
+
+    if limit <= 0:
+        return []
+
+    grouped: dict[int, dict[str, Any]] = {}
+    for item in items:
+        machine_id = item.get("machine_id")
+        if machine_id is None:
+            continue
+
+        entry = grouped.get(machine_id)
+        if entry is None:
+            entry = {
+                "machine_id": machine_id,
+                "identification_no": item.get("identification_no"),
+                "plate_no": item.get("plate_no"),
+                "type_name": item.get("type_name"),
+                "car_mark_name": item.get("car_mark_name"),
+                "car_model_name": item.get("car_model_name"),
+                "total": 0,
+                "active_count": 0,
+                "completed_count": 0,
+                "cancelled_count": 0,
+                "archived_count": 0,
+                "last_entry_date": None,
+                "_durations": [],
+            }
+            grouped[machine_id] = entry
+
+        entry["total"] += 1
+        status = item.get("status")
+        if status == "tamirde":
+            entry["active_count"] += 1
+        elif status == "tamamlandi":
+            entry["completed_count"] += 1
+            if item.get("duration_days") is not None:
+                entry["_durations"].append(item["duration_days"])
+        elif status == "iptal":
+            entry["cancelled_count"] += 1
+        entry["archived_count"] = (
+            entry["completed_count"] + entry["cancelled_count"]
+        )
+
+        entry_date = item.get("entry_date")
+        if entry_date is not None and (
+            entry["last_entry_date"] is None
+            or entry_date > entry["last_entry_date"]
+        ):
+            entry["last_entry_date"] = entry_date
+
+    def sort_key(entry: dict[str, Any]) -> tuple[int, str]:
+        label = (
+            entry.get("identification_no")
+            or entry.get("plate_no")
+            or f"Makine #{entry['machine_id']}"
+        )
+        return (-entry["total"], label.casefold())
+
+    rows: list[dict[str, Any]] = []
+    for entry in sorted(grouped.values(), key=sort_key)[:limit]:
+        durations = entry.pop("_durations")
+        rows.append(
+            {
+                **entry,
+                "average_repair_days": (
+                    round(sum(durations) / len(durations), 1)
+                    if durations
+                    else None
+                ),
+            }
+        )
+    return rows
 
 
 # =========================================================
@@ -817,6 +905,7 @@ class RepairRepository:
                 for code in REPAIR_STATUS_ORDER
             ],
             "by_type": by_type,
+            "top_machines": build_top_machines(items),
         }
 
     async def get_machine_options(
@@ -1340,6 +1429,45 @@ class RepairRepository:
             "note_added",
             f"Not eklendi: {data.note}",
             created_by_id,
+        )
+
+        try:
+            await self.db.commit()
+        except Exception:
+            await self.db.rollback()
+            raise
+
+        return await self.get_detail(repair_id)
+
+    async def update_archive_note(
+        self,
+        repair_id: int,
+        data: RepairNoteUpdateSchema,
+        updated_by_id: Optional[int],
+    ) -> dict[str, Any]:
+        """Arşivdeki (kapanmış) bir kaydın notunu düzeltir.
+
+        Yalnızca ``notes`` alanı değişir; açık tamirler buradan düzenlenemez
+        (onlar ``update_repair`` kullanır). Uç nokta ayrıca tek bir yönetici
+        hesabıyla sınırlıdır → ``require_archive_note_permission``.
+        """
+
+        record = await self._get_record(repair_id)
+        if record.status == ACTIVE_REPAIR_STATUS:
+            raise HTTPException(
+                status_code=400,
+                detail="Yalnızca arşiv kayıtlarının notu düzenlenebilir",
+            )
+
+        if data.note == record.notes:
+            return await self.get_detail(repair_id)
+
+        record.notes = data.note
+        self._add_log(
+            repair_id,
+            "updated",
+            "Arşiv notu düzeltildi.",
+            updated_by_id,
         )
 
         try:

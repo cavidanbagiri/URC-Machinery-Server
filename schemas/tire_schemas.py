@@ -148,6 +148,9 @@ class TireChangeItemSchema(BaseModel):
     car_mark_name: Optional[str] = None
     car_model_name: Optional[str] = None
     machine_status_name: Optional[str] = None
+    #: Equipment type (``type_transports``) shown in the "Ekipman Tipi" column.
+    type_id: Optional[int] = None
+    type_name: Optional[str] = None
 
     position: str
     brand_model: Optional[str] = None
